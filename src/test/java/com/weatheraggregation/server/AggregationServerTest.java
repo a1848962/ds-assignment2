@@ -1,4 +1,4 @@
-package edu.adelaide.a1848962;
+package com.weatheraggregation.server;
 
 public class AggregationServerTest {
 }
