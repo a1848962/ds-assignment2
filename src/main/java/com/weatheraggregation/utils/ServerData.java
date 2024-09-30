@@ -10,45 +10,32 @@ public class ServerData {
     public String domain;
     public int port;
 
-    public ServerData(String protocol, String name, String domain, int port) {
-        this.protocol = protocol;
-        this.name = name;
-        this.domain = domain;
-        this.port = port;
-    }
-
     // function to parse server information into ServerData object
-    public static ServerData parseServerData(String arg) {
-        // initialise server variables
-        String protocol = null;
-        String name = null;
-        String domain = null;
-        int port = -1;
-
+    public ServerData(String arg) {
         try {
             if (arg.startsWith("http")) {
                 // if http address, handle using URI class
                 URI uri = new URI(arg);
-                protocol = uri.getScheme(); // returns protocol
+                this.protocol = uri.getScheme(); // returns protocol
                 String host = uri.getHost(); // returns server name and domain
-                port = uri.getPort();  // returns port (-1 if not provided)
+                this.port = uri.getPort();  // returns port (-1 if not provided)
 
                 // check if domain is specified
                 if (host != null && host.contains(".")) {
                     // split domain from host
                     String[] hostSplit = host.split("\\.", 2);
-                    name = hostSplit[0];
-                    domain = hostSplit.length > 1 ? hostSplit[1] : null;
+                    this.name = hostSplit[0];
+                    this.domain = hostSplit.length > 1 ? hostSplit[1] : null;
                 } else {
-                    name = host; // host variable is server name, no domain specified
+                    this.name = host; // host variable is server name, no domain specified
                 }
             } else {
                 // no protocol, servername:portnumber format
-                protocol = "http"; // Assume default protocol
+                this.protocol = "http"; // assume http default
                 String[] split = arg.split(":");
                 if (split.length == 2) {
-                    name = split[0];
-                    port = Integer.parseInt(split[1]);
+                    this.name = split[0];
+                    this.port = Integer.parseInt(split[1]);
                 } else {
                     throw new IllegalArgumentException("Invalid format. Expected servername:portnumber at minimum.");
                 }
@@ -59,11 +46,9 @@ public class ServerData {
             throw new IllegalArgumentException("Port number must be a positive integer.");
         }
 
-        if (port < 0) {
+        if (this.port < 0) {
             throw new IllegalArgumentException("Port number must be specified and must be a positive integer.");
         }
-
-        return new ServerData(protocol, name, domain, port);
     }
 }
 

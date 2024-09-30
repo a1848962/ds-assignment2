@@ -1,7 +1,6 @@
 package com.weatheraggregation.server;
 
 /*
-*
 * - Store all the weather data received from all content servers in a single JSON file
 * - Weather data should be identifiable by the station ID that links the data to it's originating content server.
 * - When the aggregation server receives multiple PUT requests from the same content server, only
