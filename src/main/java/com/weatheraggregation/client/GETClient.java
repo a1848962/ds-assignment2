@@ -29,22 +29,24 @@ public class GETClient {
         // parse arg into ServerData object to store connection information
         ServerData server = new ServerData(args[0]);
 
+        // increment clock before sending request
+        clock.increment();
+
+        // send GET request with lamport time
+        String GET_REQUEST = "GET /data HTTP/1.1\r\n" +
+                "Host: " + server.name + server.domain + "\r\n" +
+                "Lamport-Time: " + clock.getTime() + "\r\n\r\n";
+
         // establish connection to server through socket
         try (Socket socket = new Socket(server.name, server.port)) {
             // create an OutputStream to write to socket out, and a BufferedReader to read from socket in
             OutputStream socketOut = socket.getOutputStream();
             BufferedReader socketIn = new BufferedReader(new InputStreamReader(socket.getInputStream()));
 
-            // increment clock before sending request
-            clock.increment();
-
-            // send GET request with lamport time
-            String GET_REQUEST = "GET /data HTTP/1.1\r\n" +
-                                 "Host: " + server.name + server.domain + "\r\n" +
-                                 "Lamport-Time: " + clock.getTime() + "\r\n\r\n";
             socketOut.write(GET_REQUEST.getBytes());
+            socketOut.flush();
 
-            // read response (JSON HANDLING NEEDS WORK)
+            // TO-DO: read response
             String line = socketIn.readLine();
             StringBuilder jsonResponse = new StringBuilder();
             int serverTimestamp = -1;

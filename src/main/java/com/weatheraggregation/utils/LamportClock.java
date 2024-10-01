@@ -1,6 +1,6 @@
 package com.weatheraggregation.utils;
 
-/* BASIC CLASS TO MANAGE LAMPORT TIME */
+/* CLASS TO MANAGE LAMPORT TIME */
 public class LamportClock {
     private int time;
 
