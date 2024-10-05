@@ -19,9 +19,12 @@ import java.net.*;
 
 public class GETClient {
     public static void main(String[] args) {
-        if (args.length != 1) {
-            // check args
-            throw new IllegalArgumentException("Expected one argument specifying connection information.");
+        String stationID = "";
+        if (args.length == 2) {
+            stationID = args[1];
+        } else if (args.length != 1) {
+            throw new IllegalArgumentException(
+                    "Expected one argument specifying connection information, optionally followed by a station ID");
         }
 
         LamportClock clock = new LamportClock(); // initialise clock
@@ -33,7 +36,7 @@ public class GETClient {
         clock.increment();
 
         // send GET request with lamport time
-        String GET_REQUEST = "GET /data HTTP/1.1\r\n" +
+        String GET_REQUEST = "GET /weather/" + stationID + " HTTP/1.1\r\n" +
                 "Host: " + server.name + server.domain + "\r\n" +
                 "Lamport-Time: " + clock.getTime() + "\r\n\r\n";
 

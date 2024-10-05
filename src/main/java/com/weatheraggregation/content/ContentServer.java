@@ -24,11 +24,14 @@ Content-Length: (And this one too)
 * */
 
 import java.io.*;
-import java.net.*;
 
-import com.fasterxml.jackson.core.JsonProcessingException;
+import java.net.Socket;
+import java.net.UnknownHostException;
+
+import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.databind.node.ObjectNode;
+
 import com.weatheraggregation.utils.LamportClock;
 import com.weatheraggregation.utils.ServerData;
 
@@ -86,12 +89,15 @@ public class ContentServer {
         ObjectNode weatherData = mapper.createObjectNode();
         parseFileJSON(weatherData, args[0]);
 
+        // get stationID from JSON
+        JsonNode stationID = weatherData.get("id");
+
         // increment clock before sending request
         clock.increment();
 
         // build the PUT request from the connection data and the weather data
         String weatherDataString = weatherData.toString();
-        String PUT_REQUEST = "PUT /weather.json HTTP/1.1\r\n" +
+        String PUT_REQUEST = "PUT /weather/" + stationID.asText() + " HTTP/1.1\r\n" +
                 "Host: " + server.name + server.domain + "\r\n" +
                 "User-Agent: ATOMClient/1/0\r\n" +
                 "Content-Type: application/json\r\n" +

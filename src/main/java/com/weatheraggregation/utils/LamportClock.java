@@ -14,9 +14,11 @@ public class LamportClock {
         this.time++;
     }
 
-    // update clock with largest time
-    public synchronized void update(int receivedTime) {
-        this.time = Math.max(this.time, receivedTime) + 1;
+    // update clock with largest time. Returns TRUE if receivedTime >= current time
+    public synchronized boolean update(int receivedTime) {
+        boolean isGreaterTime = receivedTime >= this.time;  // Check before updating
+        this.time = Math.max(this.time, receivedTime) + 1;  // Update the clock
+        return isGreaterTime;
     }
 
     // get clock time
