@@ -30,12 +30,14 @@ import com.weatheraggregation.utils.LamportClock;
 public class AggregationServer {
     private static final int DEFAULT_PORT = 4567;
     private static final int EXPIRY_TIME = 30000; // 30 seconds
-    private static final String WD_FILE = "weather_data.json";
+    private static final int MAX_STATIONS = 20; // do not hold data for more than 20 stations
+    private static final String STATION_ID_STORAGE = "station_ids";
 
     // store weather data in a concurrent hashmap. Concurrent hashmap is used over the
     // traditional hashmap as it is optimised for multithreaded use.
     private static final Map<String, ObjectNode> weatherDataMap = new ConcurrentHashMap<>();
     private static final Map<String, Long> timestamps = new ConcurrentHashMap<>();
+    private static final Set<String> stations = new HashSet<>();
     private static final ReentrantLock lock = new ReentrantLock();
 
     private static final LamportClock clock = new LamportClock(); // initialise clock
@@ -44,10 +46,16 @@ public class AggregationServer {
         // check for alternative port provided as argument, otherwise use default
         int port = args.length > 0 ? Integer.parseInt(args[0]) : DEFAULT_PORT;
 
+        // read data from persistent storage if present
+        readLocalWD();
+
+        // start listening on socket
         try (ServerSocket socket = new ServerSocket(port)) {
             System.out.println("Aggregation server running on port " + port);
+            System.out.println("'exit' to shut down server and retain all weather data.");
+            System.out.println("'exit -r' to shut down server and remove all weather data.");
 
-            // start listening on socket
+            // TO-DO: implement exit commands
             while (true) {
                 Socket clientSocket = socket.accept();
                 // accept connection and fork to handle
@@ -58,7 +66,8 @@ public class AggregationServer {
         }
     }
 
-    private static void removeExpiredWD() {
+    // function to remove any stations exceeding EXPIRY_TIME
+    private static void removeExpiredStations() {
         // use a set to store stationIDs of expired data
         Set<String> expiredStations = new HashSet<>();
 
@@ -75,17 +84,63 @@ public class AggregationServer {
             }
         }
 
-        // loop through expired stations and remove old data
+        // loop through expired stations to update class variables and delete local files
         for (String stationID : expiredStations) {
-            // remove data from `weatherDataMap` and `timestamps` hashmaps
+            // remove from program memory
             weatherDataMap.remove(stationID);
             timestamps.remove(stationID);
+            stations.remove(stationID);
 
-            // remove local WD file
+            // remove from persistent memory
             File file = new File(stationID);
             if (!(file.exists() && file.delete())) {
                 System.out.println("Error deleting expired local data for station " + stationID);
             }
+        }
+
+        updateStationsFile();
+    }
+
+    // function to remove oldest station if MAX_STATIONS is exceeded
+    private static void removeExcessStations() {
+        // This function is called after every PUT, so weatherDataMap.size() should
+        // never be more than 1 over MAX_STATIONS. Therefore, only the oldest station
+        // needs to be removed.
+        if (stations.size() > MAX_STATIONS) {
+            Long oldestTimestamp = Long.MAX_VALUE; // hold the smallest timestamp (oldest station)
+            String oldestStationID = ""; // hold the smallest timestamp (oldest station)
+            for (String stationID : weatherDataMap.keySet()) {
+                Long stationTimestamp = timestamps.get(stationID);
+                if (stationTimestamp != null && stationTimestamp < oldestTimestamp) {
+                    oldestTimestamp = stationTimestamp;
+                    oldestStationID = stationID;
+                }
+            }
+
+            // remove from program memory
+            weatherDataMap.remove(oldestStationID);
+            timestamps.remove(oldestStationID);
+            stations.remove(oldestStationID);
+
+            // remove from persistent memory
+            File file = new File(oldestStationID);
+            if (!(file.exists() && file.delete())) {
+                System.out.println("Error deleting expired local data for station " + oldestStationID);
+            }
+
+            updateStationsFile();
+        }
+    }
+
+    /* function to update persistent storage of stations set */
+    private static void updateStationsFile() {
+        File stationIDFile = new File(STATION_ID_STORAGE);
+        try (FileWriter writer = new FileWriter(stationIDFile)) {
+            for (String id : stations) {
+                writer.write(id + System.lineSeparator());
+            }
+        } catch (IOException ex) {
+            System.out.println("Error updating station ID file: " + ex.getMessage());
         }
     }
 
@@ -99,6 +154,9 @@ public class AggregationServer {
             // open file for writing, file name is stationID
             File file = new File(stationID);
             try (FileWriter fileWriter = new FileWriter(file)) {
+                // write stationID timestamp to first line
+                fileWriter.write(timestamps.get(stationID).toString() + System.lineSeparator());
+                // write JSON object to rest of file
                 mapper.writeValue(fileWriter, weatherData);
             } catch (IOException ex) {
                 System.out.println("Error writing to local file for station " + stationID + ": " + ex.getMessage());
@@ -106,25 +164,51 @@ public class AggregationServer {
         } else {
             System.out.println("Error: no weather data found for station: " + stationID);
         }
-    }
 
+        updateStationsFile();
+    }
 
     /* function to overwrite stationID data in map with contents of local file */
     // this function was written with the assistance of AI
-    private static void readLocalWD(String stationID) {
-        ObjectMapper mapper = new ObjectMapper();
-        // open file with name stationID and confirm it exists
-        File file = new File(stationID);
-        if (file.exists()) {
-            try {
-                // read weatherdata from file and cast to JSON object
-                ObjectNode weatherData = (ObjectNode) mapper.readTree(file);
-                weatherDataMap.put(stationID, weatherData);
+    private static void readLocalWD() {
+        File stationIDFile = new File(STATION_ID_STORAGE);
+
+        // read stationIDs from STATION_ID_STORAGE
+        if (stationIDFile.exists()) {
+            try (BufferedReader reader = new BufferedReader(new FileReader(stationIDFile))) {
+                String line;
+                while ((line = reader.readLine()) != null) {
+                    stations.add(line.trim());  // Add each station ID to the set
+                }
             } catch (IOException ex) {
-                System.out.println("Error reading local file for station " + stationID + ": " + ex.getMessage());
+                System.out.println("Error reading station ID file: " + ex.getMessage());
             }
         } else {
-            System.out.println("Error: local file not found for station: " + stationID);
+            System.out.println("No local station ID file found.");
+        }
+
+        // read each file corresponding to stationID, populate weatherDataMap and update timestamps
+        ObjectMapper mapper = new ObjectMapper();
+        for (String stationID : stations) {
+            File stationFile = new File(stationID);
+            if (stationFile.exists()) {
+                try (BufferedReader reader = new BufferedReader(new FileReader(stationFile))) {
+                    // first line is timestamp
+                    String timestamp = reader.readLine();
+                    if (timestamp != null) {
+                        Long stationTimestamp = Long.parseLong(timestamp.trim());
+                        timestamps.put(stationID, stationTimestamp);
+                    }
+
+                    // rest of file is JSON weather data
+                    ObjectNode weatherData = (ObjectNode) mapper.readTree(reader);
+                    weatherDataMap.put(stationID, weatherData);
+                } catch (IOException ex) {
+                    System.out.println("Error reading weather data file for station " + stationID + ": " + ex.getMessage());
+                }
+            } else {
+                System.out.println("Warning: Weather data file for station " + stationID + " not found.");
+            }
         }
     }
 
@@ -139,10 +223,6 @@ public class AggregationServer {
         @Override
         public void run() {
             try {
-                // before handling each new connection, immediately check for expired data
-                // idea for improvement: run this in a background thread
-                removeExpiredWD();
-
                 // use a printwriter for writing to socket, and a bufferedreader for reading
                 PrintWriter socketOut = new PrintWriter(socket.getOutputStream(), true);
                 BufferedReader socketIn = new BufferedReader(new InputStreamReader(socket.getInputStream()));
@@ -171,9 +251,9 @@ public class AggregationServer {
         }
 
         private void handleGet(BufferedReader socketIn, PrintWriter socketOut, String resource) {
-            // check requested resource is weather and isolate stationID if provided
+            // check requested resource is /weather and isolate stationID if provided
             String[] resourceParts = resource.split("/");
-            String stationID = "any"; // default if no station is specified
+            String stationID = ""; // default if no station is specified
             if (!resourceParts[1].equals("weather")) {
                 // send 404 error code and exit
                 returnErrorCode("404 Not Found", socketOut);
@@ -184,7 +264,9 @@ public class AggregationServer {
 
             // read headers and update lamport time
             int clientLamportTime = parseHeaders(socketIn);
+            lock.lock();
             boolean isCurrentRequest = clock.update(clientLamportTime);
+            lock.unlock();
 
             // confirm lamport-time was sent in request header
             if (clientLamportTime < 0) {
@@ -192,69 +274,68 @@ public class AggregationServer {
                 return;
             }
 
-            // acquire lock and retrieve weather data
-            boolean isLockAcquired = false;
+            // remove expired data before building response
+            lock.lock();
+            removeExpiredStations();
+            lock.unlock();
+
             try {
-                isLockAcquired = lock.tryLock(1, TimeUnit.SECONDS);
-            } catch (InterruptedException ex) {
-                System.out.println("Error obtaining lock: " + ex.getMessage());
-            }
-            if (isLockAcquired) {
-                try {
-                    ObjectNode responseData; // initialise JSON object to contain response
-                    if (stationID.equals("any")) {
-                        // no station ID specified, return all weather data stored in the AS
-                        responseData = new ObjectMapper().createObjectNode();
-                        weatherDataMap.forEach(responseData::set); // this line was provided by a LLM
-                    } else {
-                        // station ID provided, retrieve corresponding weather data
-                        responseData = weatherDataMap.get(stationID);
-                        // if station ID not in map, return 404 error
-                        if (responseData == null) {
-                            returnErrorCode("404 Not Found", socketOut);
-                            return;
-                        }
+                ObjectNode responseData; // initialise JSON object to contain response
+                if (stationID.isEmpty()) {
+                    // no station ID specified, return all weather data stored in the AS
+                    responseData = new ObjectMapper().createObjectNode();
+                    weatherDataMap.forEach(responseData::set); // this line was provided by a LLM
+                    // deliberately not locking around forEach call, it is fine for other threads to modify the map
+                    // while building responseData. Removed/added stations will be reflected in responseData.
+                } else {
+                    // station ID provided, retrieve corresponding weather data
+                    // concurrent hashmap does not require locking for atomic actions
+                    responseData = weatherDataMap.get(stationID);
+                    // if station ID not in map, return 404 error
+                    if (responseData == null) {
+                        returnErrorCode("404 Not Found", socketOut);
+                        return;
                     }
-
-                    // parse response data to JSON string
-                    String responseJson = new ObjectMapper().writeValueAsString(responseData);
-
-                    // increment clock before sending response
-                    clock.increment();
-
-                    // send response with payload
-                    socketOut.println("HTTP/1.1 200 OK");
-                    socketOut.println("Content-Type: application/json");
-                    socketOut.println("Content-Length: " + responseJson.length());
-                    socketOut.println("Lamport-Time: " + clock.getTime());
-                    socketOut.println();
-                    socketOut.println(responseJson);
-
-                } catch (IOException ex) {
-                    System.out.println("Error handling GET request: " + ex.getMessage());
-                } finally {
-                    lock.unlock();
                 }
-            } else {
-                // failed to acquire lock, return error
-                System.out.println("Error obtaining lock in GET handler");
-                returnErrorCode("500 Internal Server Error", socketOut);
+
+                // parse response data to JSON string
+                String responseJson = new ObjectMapper().writeValueAsString(responseData);
+
+                // increment clock before sending response
+                lock.lock();
+                clock.increment();
+                lock.unlock();
+
+                // send response with payload
+                socketOut.println("HTTP/1.1 200 OK");
+                socketOut.println("Content-Type: application/json");
+                socketOut.println("Content-Length: " + responseJson.length());
+                socketOut.println("Lamport-Time: " + clock.getTime());
+                socketOut.println();
+                socketOut.println(responseJson);
+
+            } catch (IOException ex) {
+                System.out.println("Error handling GET request: " + ex.getMessage());
             }
         }
 
         private void handlePut(BufferedReader socketIn, PrintWriter socketOut, String resource) {
+            // confirm resource follows format "/weather/stationID"
             String[] resourceParts = resource.split("/");
-            if (resourceParts.length != 3 || !resourceParts[1].equals("weather")) {
+            if (resourceParts.length != 3 || !resourceParts[1].trim().equals("weather")) {
                 // send 404 error code for invalid resource
                 returnErrorCode("404 Not Found", socketOut);
                 return;
             }
 
-            String stationID = resourceParts[2];
+            String stationID = resourceParts[2].trim();
 
             // read headers and update lamport time
             int clientLamportTime = parseHeaders(socketIn);
+
+            lock.lock();
             boolean isCurrentRequest = clock.update(clientLamportTime);
+            lock.unlock();
 
             // confirm lamport-time was sent in request header
             if (clientLamportTime < 0) {
@@ -281,50 +362,38 @@ public class AggregationServer {
                 return;
             }
 
-            // parse payload to JSON object
+            // parse payload to JSON object and store in server memory / persistent storage
             try {
                 ObjectNode weatherData = (ObjectNode) new ObjectMapper().readTree(jsonContent.toString());
 
                 boolean isNewStation = !weatherDataMap.containsKey(stationID);
+                // boolean isNewStation = !stations.contains(stationID);
 
-                // acquire lock and add weather data to hashmap and local WD file
-                boolean isLockAcquired = false;
-                try {
-                    isLockAcquired = lock.tryLock(1, TimeUnit.SECONDS);
-                } catch (InterruptedException ex) {
-                    System.out.println("Error obtaining lock: " + ex.getMessage());
+                // update data if lamport time is current (clientTime >= server clock)
+                if (isCurrentRequest) {
+                    // concurrent hashmap does not require locking for atomic actions
+                    weatherDataMap.put(stationID, weatherData);
+                    timestamps.put(stationID, System.currentTimeMillis());
+                    stations.add(stationID);
+
+                    // lock to update persistent storage and remove expired/excess stations
+                    lock.lock();
+                    writeLocalWD(stationID);
+                    removeExpiredStations(); // remove expired stations BEFORE removing excess
+                    removeExcessStations();
+                    lock.unlock();
                 }
-                if (isLockAcquired) {
-                    boolean dataUpdated = false;
-                    try {
-                        // update data if lamport time is current (clientTime >= server clock)
-                        if (isCurrentRequest) {
-                            weatherDataMap.put(stationID, weatherData);
-                            timestamps.put(stationID, System.currentTimeMillis());
-                            dataUpdated = true;
-                        }
-                    } finally {
-                        lock.unlock();
-                    }
 
-                    // write data to local file after lock is released
-                    if (dataUpdated) {
-                        writeLocalWD(stationID);
-                    }
+                // increment clock before sending response
+                lock.lock();
+                clock.increment();
+                lock.unlock();
 
-                    // increment clock before sending response
-                    clock.increment();
-
-                    // send response (201 for new station, 200 for update)
-                    socketOut.println(isNewStation ? "HTTP/1.1 201 Created" : "HTTP/1.1 200 OK");
-                    socketOut.println("Content-Type: application/json");
-                    socketOut.println("Content-Length: 0");
-                    socketOut.println();
-                } else {
-                    // failed to acquire lock, return error
-                    System.out.println("Error obtaining lock in PUT handler");
-                    returnErrorCode("500 Internal Server Error", socketOut);
-                }
+                // send response (201 for new station, 200 for update)
+                socketOut.println(isNewStation ? "HTTP/1.1 201 Created" : "HTTP/1.1 200 OK");
+                socketOut.println("Content-Type: application/json");
+                socketOut.println("Content-Length: 0");
+                socketOut.println();
             } catch (Exception ex) {
                 // invalid JSON, send 500 Internal Server Error
                 returnErrorCode("500 Internal Server Error", socketOut);
