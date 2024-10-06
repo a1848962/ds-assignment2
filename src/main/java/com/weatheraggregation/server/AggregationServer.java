@@ -175,9 +175,10 @@ public class AggregationServer {
         }
 
         if (stations.size() > MAX_STATIONS) {
-            Long oldestTimestamp = Long.MAX_VALUE; // hold the smallest timestamp (oldest station)
+            long oldestTimestamp = Long.MAX_VALUE; // hold the smallest timestamp (oldest station)
             String oldestStationID = ""; // hold the smallest timestamp (oldest station)
             for (String stationID : weatherDataMap.keySet()) {
+                // use Long wrapper to allow direct assignment of null value
                 Long stationTimestamp = timestamps.get(stationID);
                 if (stationTimestamp != null && stationTimestamp < oldestTimestamp) {
                     oldestTimestamp = stationTimestamp;
