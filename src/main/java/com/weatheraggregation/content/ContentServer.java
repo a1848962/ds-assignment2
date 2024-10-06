@@ -115,7 +115,15 @@ public class ContentServer {
             socketOut.write(PUT_REQUEST.getBytes());
             socketOut.flush();
 
-            // TO-DO: Read response
+            /*   - First time weather data is received and the storage file is created, return status 201 - HTTP_CREATED
+             *   - If later uploads (updates) are successful, you should return status 200
+             *   - Any request other than GET or PUT should return status 400
+             *   - Sending no content to the server should return status 204
+             *   - Sending invalid JSON data (JSON does not make sense) should return status 500
+             */
+            String statusLine = socketIn.readLine();
+            System.out.println("Server Response: " + statusLine);
+            // TO-DO: improve response handling
 
         } catch (UnknownHostException ex) {
             System.out.println("Server not found: " + ex.getMessage());

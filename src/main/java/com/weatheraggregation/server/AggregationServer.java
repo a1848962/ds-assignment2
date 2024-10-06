@@ -26,6 +26,7 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.databind.node.ObjectNode;
 
 import com.weatheraggregation.utils.LamportClock;
+import com.weatheraggregation.utils.ParsingUtils;
 
 public class AggregationServer {
     private static final int DEFAULT_PORT = 4567;
@@ -49,33 +50,33 @@ public class AggregationServer {
         // read data from persistent storage if present
         readLocalWD();
 
-        // fork new thread to listen for exit command on stdin
-        new Thread(() -> {
-            try (BufferedReader reader = new BufferedReader(new InputStreamReader(System.in))) {
-                String input;
-                while ((input = reader.readLine()) != null) {
-                    if (input.trim().equals("exit")) {
-                        serverExit(false);  // Exit and retain weather data
-                        break;
-                    } else if (input.trim().equals("exit -r")) {
-                        serverExit(true);  // Exit and remove weather data
-                        break;
-                    } else {
-                        System.out.println("Invalid command: " + input);
-                        System.out.println("'exit' to shut down server and retain all weather data.");
-                        System.out.println("'exit -r' to shut down server and remove all weather data.");
-                    }
-                }
-            } catch (IOException ex) {
-                System.out.println("Error reading shutdown commands: " + ex.getMessage());
-            }
-        }).start();
-
         // start listening on socket
         try (ServerSocket socket = new ServerSocket(port)) {
             System.out.println("Aggregation server running on port " + port);
             System.out.println("'exit' to shut down server and retain all weather data.");
             System.out.println("'exit -r' to shut down server and remove all weather data.");
+
+            // fork new thread to listen for exit command on stdin
+            new Thread(() -> {
+                try (BufferedReader reader = new BufferedReader(new InputStreamReader(System.in))) {
+                    String input;
+                    while ((input = reader.readLine()) != null) {
+                        if (input.trim().equals("exit")) {
+                            serverExit(false, socket);  // Exit and retain weather data
+                            break;
+                        } else if (input.trim().equals("exit -r")) {
+                            serverExit(true, socket);  // Exit and remove weather data
+                            break;
+                        } else {
+                            System.out.println("Invalid command: " + input);
+                            System.out.println("'exit' to shut down server and retain all weather data.");
+                            System.out.println("'exit -r' to shut down server and remove all weather data.");
+                        }
+                    }
+                } catch (IOException ex) {
+                    System.out.println("Error reading shutdown commands: " + ex.getMessage());
+                }
+            }).start();
 
             // TO-DO: implement exit commands
             while (true) {
@@ -89,7 +90,7 @@ public class AggregationServer {
     }
 
     /* function to close server. Will remove WD in persistent storage according to removeData bool */
-    private static void serverExit(boolean removeData) {
+    private static void serverExit(boolean removeData, ServerSocket socket) {
         System.out.println("Shutting down...");
 
         if (removeData) {
@@ -109,6 +110,15 @@ public class AggregationServer {
             }
         } else {
             System.out.println("Weather data will be retained");
+        }
+
+        // close server socket
+        try {
+            if (socket != null && !socket.isClosed()) {
+                socket.close();
+            }
+        } catch (IOException ex) {
+            System.out.println("Error closing server socket: " + ex.getMessage());
         }
 
         System.out.println("Server shutdown complete");
@@ -271,17 +281,20 @@ public class AggregationServer {
         // override run to handle new connections
         @Override
         public void run() {
+            // use a printwriter for writing to socket, and a bufferedreader for reading
+            // declare outside of try block to allow socket closing in finally block
+            PrintWriter socketOut = null;
+            BufferedReader socketIn = null;
             try {
-                // use a printwriter for writing to socket, and a bufferedreader for reading
-                PrintWriter socketOut = new PrintWriter(socket.getOutputStream(), true);
-                BufferedReader socketIn = new BufferedReader(new InputStreamReader(socket.getInputStream()));
+                socketOut = new PrintWriter(socket.getOutputStream(), true);
+                socketIn = new BufferedReader(new InputStreamReader(socket.getInputStream()));
 
                 // Confirm first line of request is one of the following and handle accordingly
                 // "GET /weather/station ..."
                 // "PUT /weather/station ..."
-                String firstHeader = socketIn.readLine();
-                if (firstHeader != null) {
-                    String[] request = firstHeader.split(" ");
+                String requestLine = socketIn.readLine();
+                if (requestLine != null) {
+                    String[] request = requestLine.split(" ");
 
                     if (request[0].equals("GET")) {
                         handleGet(socketIn, socketOut, request[1]);
@@ -296,7 +309,24 @@ public class AggregationServer {
                 System.out.println("Server not found: " + ex.getMessage());
             } catch (IOException ex) {
                 System.out.println("I/O error: " + ex.getMessage());
+            } finally {
+                // close socket and streams
+                try {
+                    if (socketIn != null) socketIn.close();
+                    if (socketOut != null) socketOut.close();
+                    if (socket != null) socket.close();
+                } catch (IOException ex) {
+                    System.out.println("Error closing socket: " + ex.getMessage());
+                }
             }
+        }
+
+        private void returnErrorCode(String errorCode, PrintWriter socketOut) {
+            socketOut.println("HTTP/1.1 " + errorCode);
+            socketOut.println("Content-Type: text/plain");
+            socketOut.println("Content-Length: 0");
+            socketOut.println("Lamport-Time: " + clock.getTime());
+            socketOut.println();
         }
 
         private void handleGet(BufferedReader socketIn, PrintWriter socketOut, String resource) {
@@ -311,8 +341,10 @@ public class AggregationServer {
                 stationID = resourceParts[2];
             }
 
-            // read headers and update lamport time
-            int clientLamportTime = parseHeaders(socketIn);
+            // parse headers and update lamport time
+            Map<String, String> headers = ParsingUtils.parseHeaders(socketIn);
+            int clientLamportTime = Integer.parseInt(headers.get("Lamport-Time"));
+
             // confirm lamport-time was sent in request header
             if (clientLamportTime < 0) {
                 returnErrorCode("400 Bad Request", socketOut);
@@ -396,7 +428,9 @@ public class AggregationServer {
             String stationID = resourceParts[2].trim();
 
             // read headers and update lamport time
-            int clientLamportTime = parseHeaders(socketIn);
+            Map<String, String> headers = ParsingUtils.parseHeaders(socketIn);
+            int clientLamportTime = Integer.parseInt(headers.get("Lamport-Time"));
+
             // confirm lamport-time was sent in request header
             if (clientLamportTime < 0) {
                 returnErrorCode("400 Bad Request", socketOut);
@@ -416,83 +450,40 @@ public class AggregationServer {
 //                return;
 //            }
 
-            // read request payload to string
-            StringBuilder jsonContent = new StringBuilder();
-            String line;
-            try {
-                line = socketIn.readLine();
-                while (line != null && !line.isEmpty()) {
-                    jsonContent.append(line);
-                    line = socketIn.readLine();
-                }
-            } catch (IOException ex) {
-                System.out.println("Error reading payload: " + ex.getMessage());
-            }
-
-            // send 204 error if no payload is provided
-            if (jsonContent.isEmpty()) {
-                returnErrorCode("204 No Content", socketOut);
+            // parse remainder of socketIn buffer (payload) to JSON
+            String[] jsonErrorCode = new String[2]; // string to hold error code
+            ObjectNode weatherData = ParsingUtils.parseJSON(socketIn, jsonErrorCode);
+            if (weatherData == null) {
+                returnErrorCode(jsonErrorCode[0], socketOut);
                 return;
             }
 
-            // parse payload to JSON object and store in server memory / persistent storage
+            boolean isNewStation = !weatherDataMap.containsKey(stationID);
+            // boolean isNewStation = !stations.contains(stationID);
+
+            // update data:
+            // concurrent hashmap does not require locking for atomic actions
+            weatherDataMap.put(stationID, weatherData);
+            timestamps.put(stationID, System.currentTimeMillis());
+            stations.add(stationID);
+
+            // lock to update persistent storage and remove expired/excess stations
+            lock.lock();
             try {
-                ObjectNode weatherData = (ObjectNode) new ObjectMapper().readTree(jsonContent.toString());
-
-                boolean isNewStation = !weatherDataMap.containsKey(stationID);
-                // boolean isNewStation = !stations.contains(stationID);
-
-                // update data:
-                // concurrent hashmap does not require locking for atomic actions
-                weatherDataMap.put(stationID, weatherData);
-                timestamps.put(stationID, System.currentTimeMillis());
-                stations.add(stationID);
-
-                // lock to update persistent storage and remove expired/excess stations
-                lock.lock();
-                try {
-                    writeLocalWD(stationID);
-                    removeExpiredStations(); // remove expired stations BEFORE removing excess
-                    removeExcessStations();
-                    clock.increment(); // increment clock before sending response
-                } finally {
-                    lock.unlock();
-                }
-
-                // send response (201 for new station, 200 for update)
-                socketOut.println(isNewStation ? "HTTP/1.1 201 Created" : "HTTP/1.1 200 OK");
-                socketOut.println("Content-Type: application/json");
-                socketOut.println("Content-Length: 0");
-                socketOut.println();
-            } catch (Exception ex) {
-                // invalid JSON, send 500 Internal Server Error
-                returnErrorCode("500 Internal Server Error", socketOut);
+                writeLocalWD(stationID);
+                removeExpiredStations(); // remove expired stations BEFORE removing excess
+                removeExcessStations();
+                clock.increment(); // increment clock before sending response
+            } finally {
+                lock.unlock();
             }
-        }
 
-        private int parseHeaders(BufferedReader socketIn) {
-            int clientTime = -1;
-            try {
-                String line = socketIn.readLine();
-                while (line != null && !line.isEmpty()) {
-                    if (line.startsWith("Lamport-Time:")) {
-                        // get client timestamp and update local clock with greatest time
-                        clientTime = Integer.parseInt(line.split(":")[1].trim());
-                    }
-                    line = socketIn.readLine();
-                }
-            } catch (IOException ex) {
-                System.out.println("Error reading headers: " + ex.getMessage());
-            }
-            return clientTime;
-        }
-
-        private void returnErrorCode(String errorCode, PrintWriter socketOut) {
-            socketOut.println("HTTP/1.1 " + errorCode);
-            socketOut.println("Content-Type: text/plain");
+            // send response (201 for new station, 200 for update)
+            socketOut.println(isNewStation ? "HTTP/1.1 201 Created" : "HTTP/1.1 200 OK");
+            socketOut.println("Content-Type: application/json");
             socketOut.println("Content-Length: 0");
-            socketOut.println("Lamport-Time: " + clock.getTime());
             socketOut.println();
+
         }
     }
 }

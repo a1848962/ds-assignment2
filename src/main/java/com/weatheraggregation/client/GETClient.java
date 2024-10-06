@@ -11,11 +11,12 @@ package com.weatheraggregation.client;
 *
 * */
 
-import com.weatheraggregation.utils.ServerData;
-import com.weatheraggregation.utils.LamportClock;
+import com.fasterxml.jackson.databind.node.ObjectNode;
+import com.weatheraggregation.utils.*;
 
 import java.io.*;
 import java.net.*;
+import java.util.Map;
 
 public class GETClient {
     public static void main(String[] args) {
@@ -49,35 +50,25 @@ public class GETClient {
             socketOut.write(GET_REQUEST.getBytes());
             socketOut.flush();
 
-            // TO-DO: read response
-            String line = socketIn.readLine();
-            StringBuilder jsonResponse = new StringBuilder();
-            int serverTimestamp = -1;
-            while (line != null) {
-                System.out.println(line);
+            Map<String, String> headers = ParsingUtils.parseHeaders(socketIn);
+            int clientLamportTime = Integer.parseInt(headers.get("Lamport-Time"));
 
-                if (line.startsWith("Lamport-Time:")) {
-                    // get server timestamp
-                    serverTimestamp = Integer.parseInt(line.split(":")[1]);
-                }
+            // TO-DO: handle lamport clock
 
-                jsonResponse.append(line);
+            // parse remainder of socketIn buffer (payload) to JSON
+            String[] jsonErrorCode = new String[2]; // string to hold error code
+            ObjectNode weatherData = ParsingUtils.parseJSON(socketIn, jsonErrorCode);
 
-                // read next line
-                line = socketIn.readLine();
+            if (weatherData != null) {
+                System.out.println("Received JSON: " + weatherData.toString());
+            } else {
+                // print clientside error message jsonErrorCode[1]
+                System.out.println(jsonErrorCode[1]);
             }
-
-            // update client Lamport clock
-            clock.update(serverTimestamp);
 
             // close streams
             socketIn.close();
             socketOut.close();
-            socket.close();
-
-            System.out.println("Received JSON: " + jsonResponse.toString());
-            System.out.println("Updated Client Lamport Time: " + clock.getTime());
-
         } catch (UnknownHostException ex) {
             System.out.println("Server not found: " + ex.getMessage());
         } catch (IOException ex) {
