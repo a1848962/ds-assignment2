@@ -11,11 +11,14 @@ package com.weatheraggregation.client;
 *
 * */
 
+import com.fasterxml.jackson.databind.JsonNode;
+import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.databind.node.ObjectNode;
 import com.weatheraggregation.utils.*;
 
 import java.io.*;
 import java.net.*;
+import java.util.Iterator;
 import java.util.Map;
 
 public class GETClient {
@@ -50,6 +53,8 @@ public class GETClient {
             socketOut.write(GET_REQUEST.getBytes());
             socketOut.flush();
 
+            String statusLine = socketIn.readLine();
+            System.out.println("Received response: " + statusLine);
             Map<String, String> headers = ParsingUtils.parseHeaders(socketIn);
             int clientLamportTime = Integer.parseInt(headers.get("Lamport-Time"));
 
@@ -57,10 +62,33 @@ public class GETClient {
 
             // parse remainder of socketIn buffer (payload) to JSON
             String[] jsonErrorCode = new String[2]; // string to hold error code
-            ObjectNode weatherData = ParsingUtils.parseJSON(socketIn, jsonErrorCode);
+            ObjectNode weatherData = ParsingUtils.parseJSON(socketIn, jsonErrorCode, headers);
 
             if (weatherData != null) {
-                System.out.println("Received JSON: " + weatherData.toString());
+                // following code to print formatted JSON was assisted by a LLM
+                try {
+                    Iterator<Map.Entry<String, JsonNode>> fields = weatherData.fields();
+
+                    while (fields.hasNext()) {
+                        Map.Entry<String, JsonNode> entry = fields.next();
+                        ObjectNode stationData = (ObjectNode) entry.getValue();
+
+                        // Iterate over the fields in the stationData and print each key-value pair
+                        Iterator<Map.Entry<String, JsonNode>> stationFields = stationData.fields();
+                        Map.Entry<String, JsonNode> id = stationFields.next();
+                        System.out.println("## WEATHER DATA FOR " + id.getValue().asText() + " ##");
+
+                        while (stationFields.hasNext()) {
+                            Map.Entry<String, JsonNode> field = stationFields.next();
+                            System.out.println(field.getKey() + ": " + field.getValue().asText());
+                        }
+
+                        System.out.println();
+                    }
+                } catch (Exception ex) {
+                    System.out.println("Error printing weather data: " + ex.getMessage());
+                }
+                // end LLM assisted code
             } else {
                 // print clientside error message jsonErrorCode[1]
                 System.out.println(jsonErrorCode[1]);

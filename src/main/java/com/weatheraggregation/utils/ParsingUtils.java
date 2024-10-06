@@ -19,7 +19,11 @@ public class ParsingUtils {
             String line = socketIn.readLine();
             while (line != null && !line.isEmpty()) {
                 String[] lineSplit = line.split(":");
-                headers.put(lineSplit[0].trim(), lineSplit[1].trim());
+                if (lineSplit.length == 2) {
+                    headers.put(lineSplit[0].trim(), lineSplit[1].trim());
+                } else {
+                    throw new IOException("Invalid header line: " + line);
+                }
                 line = socketIn.readLine();
             }
         } catch (IOException ex) {
@@ -30,32 +34,37 @@ public class ParsingUtils {
 
     /* Function to read socketIn to a string, then parse string to JSON.
      * errorCode[0] holds server error message, errorCode[1] holds client error message. */
-    public static ObjectNode parseJSON(BufferedReader socketIn, String[] errorCode) {
-        // read request payload to string
-        StringBuilder jsonContent = new StringBuilder();
-        String line;
-        try {
-            line = socketIn.readLine();
-            while (line != null && !line.isEmpty()) {
-                jsonContent.append(line);
-                line = socketIn.readLine();
-            }
-        } catch (IOException ex) {
-            errorCode[0] = "500 Internal Server Error";
-            errorCode[1] = "Error reading payload: " + ex.getMessage();
-            return null;
-        }
+    public static ObjectNode parseJSON(BufferedReader socketIn, String[] errorCode, Map<String, String> headers) {
+        int contentLength = Integer.parseInt(headers.get("Content-Length"));
 
-        // check for empty payload
-        if (jsonContent.isEmpty()) {
+        // check content length is not 0
+        if (contentLength < 1) {
             errorCode[0] = "204 No Content";
             errorCode[1] = "Empty payload";
             return null;
         }
 
-        // try parse string to JSON
+        // check Content-Type is application/json
+        if (!headers.get("Content-Type").equals("application/json")) {
+            errorCode[0] = "400 Bad Request";
+            errorCode[1] = "Content-Type is not application/json";
+            return null;
+        }
+
+        char[] buffer = new char[contentLength];
         try {
-            return (ObjectNode) new ObjectMapper().readTree(jsonContent.toString());
+            // read exactly 'contentLength' characters from the socket
+            int bytesRead = socketIn.read(buffer, 0, contentLength);
+            if (bytesRead != contentLength) {
+                errorCode[0] = "400 Bad Request";
+                errorCode[1] = "Incomplete payload received";
+                return null;
+            }
+
+            String jsonContent = new String(buffer);
+
+            // Try to parse the string into a JSON ObjectNode
+            return (ObjectNode) new ObjectMapper().readTree(jsonContent);
         } catch (Exception ex) {
             errorCode[0] = "500 Internal Server Error";
             errorCode[1] = "Error parsing payload to JSON: " + ex.getMessage();

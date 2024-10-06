@@ -29,8 +29,9 @@ import com.weatheraggregation.utils.LamportClock;
 import com.weatheraggregation.utils.ParsingUtils;
 
 public class AggregationServer {
+    private static final boolean LIVE_UPDATES = true;
     private static final int DEFAULT_PORT = 4567;
-    private static final int EXPIRY_TIME = 30000; // 30 seconds
+    private static final int EXPIRY_TIME = 120 * 1000; // 2 MINS FOR TESTING, REVERT TO 30 seconds
     private static final int MAX_STATIONS = 20; // do not hold data for more than 20 stations
     private static final String STATION_ID_STORAGE = "station_ids";
 
@@ -127,6 +128,10 @@ public class AggregationServer {
 
     // function to remove any stations exceeding EXPIRY_TIME
     private static void removeExpiredStations() {
+        if (LIVE_UPDATES) {
+            System.out.println("Removing expired stations...");
+        }
+
         // use a set to store stationIDs of expired data
         Set<String> expiredStations = new HashSet<>();
 
@@ -165,6 +170,10 @@ public class AggregationServer {
         // This function is called after every PUT, so weatherDataMap.size() should
         // never be more than 1 over MAX_STATIONS. Therefore, only the oldest station
         // needs to be removed.
+        if (LIVE_UPDATES) {
+            System.out.println("Removing excess stations...");
+        }
+
         if (stations.size() > MAX_STATIONS) {
             Long oldestTimestamp = Long.MAX_VALUE; // hold the smallest timestamp (oldest station)
             String oldestStationID = ""; // hold the smallest timestamp (oldest station)
@@ -193,6 +202,9 @@ public class AggregationServer {
 
     /* function to update persistent storage of stations set */
     private static void updateStationsFile() {
+        if (LIVE_UPDATES) {
+            System.out.println("Updating stations file...");
+        }
         File stationIDFile = new File(STATION_ID_STORAGE);
         try (FileWriter writer = new FileWriter(stationIDFile)) {
             for (String id : stations) {
@@ -205,6 +217,10 @@ public class AggregationServer {
 
     /* function to overwrite local weather data file for provided station with current weatherDataMap */
     private static void writeLocalWD(String stationID) {
+        if (LIVE_UPDATES) {
+            System.out.println("Writing local data for station " + stationID + "...");
+        }
+
         // retrieve station weatherdata from map
         ObjectMapper mapper = new ObjectMapper();
         ObjectNode weatherData = weatherDataMap.get(stationID);
@@ -230,6 +246,10 @@ public class AggregationServer {
     /* function to overwrite stationID data in map with contents of local file */
     // this function was written with the assistance of AI
     private static void readLocalWD() {
+        if (LIVE_UPDATES) {
+            System.out.println("Reading local data...");
+        }
+
         File stationIDFile = new File(STATION_ID_STORAGE);
 
         // read stationIDs from STATION_ID_STORAGE
@@ -281,12 +301,15 @@ public class AggregationServer {
         // override run to handle new connections
         @Override
         public void run() {
-            // use a printwriter for writing to socket, and a bufferedreader for reading
+            if (LIVE_UPDATES) {
+                System.out.println("New connection accepted...");
+            }
+            // use a outputsteam for writing to socket, and a bufferedreader for reading
             // declare outside of try block to allow socket closing in finally block
-            PrintWriter socketOut = null;
+            OutputStream socketOut = null;
             BufferedReader socketIn = null;
             try {
-                socketOut = new PrintWriter(socket.getOutputStream(), true);
+                socketOut = socket.getOutputStream();
                 socketIn = new BufferedReader(new InputStreamReader(socket.getInputStream()));
 
                 // Confirm first line of request is one of the following and handle accordingly
@@ -321,15 +344,30 @@ public class AggregationServer {
             }
         }
 
-        private void returnErrorCode(String errorCode, PrintWriter socketOut) {
-            socketOut.println("HTTP/1.1 " + errorCode);
-            socketOut.println("Content-Type: text/plain");
-            socketOut.println("Content-Length: 0");
-            socketOut.println("Lamport-Time: " + clock.getTime());
-            socketOut.println();
+        private void returnErrorCode(String errorCode, OutputStream socketOut) {
+            if (LIVE_UPDATES) {
+                System.out.println("Returning error code " + errorCode + "...");
+            }
+
+            String RESPONSE =
+                    "HTTP/1.1 " + errorCode + "\r\n" +
+                    "Content-Type: text/plain" + "\r\n" +
+                    "Content-Length: 0" + "\r\n" +
+                    "Lamport-Time: " + clock.getTime() + "\r\n\r\n";
+
+            try {
+                socketOut.write(RESPONSE.getBytes());
+                socketOut.flush();
+            } catch (IOException e) {
+                System.out.println("Error writing to socket...");
+            }
         }
 
-        private void handleGet(BufferedReader socketIn, PrintWriter socketOut, String resource) {
+        private void handleGet(BufferedReader socketIn, OutputStream socketOut, String resource) {
+            if (LIVE_UPDATES) {
+                System.out.println("Handling GET request...");
+            }
+
             // check requested resource is /weather and isolate stationID if provided
             String[] resourceParts = resource.split("/");
             String stationID = ""; // default if no station is specified
@@ -403,20 +441,34 @@ public class AggregationServer {
                     lock.unlock();
                 }
 
-                // send response with payload
-                socketOut.println("HTTP/1.1 200 OK");
-                socketOut.println("Content-Type: application/json");
-                socketOut.println("Content-Length: " + responseJson.length());
-                socketOut.println("Lamport-Time: " + clock.getTime());
-                socketOut.println();
-                socketOut.println(responseJson);
+                if (LIVE_UPDATES) {
+                    System.out.println("GET request successfully handled, sending response...");
+                }
 
+                // send response with payload
+                String RESPONSE =
+                        "HTTP/1.1 200 OK" + "\r\n" +
+                        "Content-Type: application/json" + "\r\n" +
+                        "Content-Length: " + responseJson.length() + "\r\n" +
+                        "Lamport-Time: " + clock.getTime() + "\r\n\r\n" +
+                        responseJson;
+
+                try {
+                    socketOut.write(RESPONSE.getBytes());
+                    socketOut.flush();
+                } catch (IOException e) {
+                    System.out.println("Error writing to socket...");
+                }
             } catch (IOException ex) {
                 System.out.println("Error handling GET request: " + ex.getMessage());
             }
         }
 
-        private void handlePut(BufferedReader socketIn, PrintWriter socketOut, String resource) {
+        private void handlePut(BufferedReader socketIn, OutputStream socketOut, String resource) {
+            if (LIVE_UPDATES) {
+                System.out.println("Handling PUT request...");
+            }
+
             // confirm resource follows format "/weather/stationID"
             String[] resourceParts = resource.split("/");
             if (resourceParts.length != 3 || !resourceParts[1].trim().equals("weather")) {
@@ -437,6 +489,10 @@ public class AggregationServer {
                 return;
             }
 
+            if (LIVE_UPDATES) {
+                System.out.println("Headers parsed successfully, locking to update clock");
+            }
+
             lock.lock();
             try {
                 boolean clientIsAhead = clock.update(clientLamportTime);
@@ -450,12 +506,20 @@ public class AggregationServer {
 //                return;
 //            }
 
+            if (LIVE_UPDATES) {
+                System.out.println("Parsing JSON data");
+            }
             // parse remainder of socketIn buffer (payload) to JSON
             String[] jsonErrorCode = new String[2]; // string to hold error code
-            ObjectNode weatherData = ParsingUtils.parseJSON(socketIn, jsonErrorCode);
+            ObjectNode weatherData = ParsingUtils.parseJSON(socketIn, jsonErrorCode, headers);
             if (weatherData == null) {
+                System.out.println("null wd");
                 returnErrorCode(jsonErrorCode[0], socketOut);
                 return;
+            }
+
+            if (LIVE_UPDATES) {
+                System.out.println("JSON Parsed successfully");
             }
 
             boolean isNewStation = !weatherDataMap.containsKey(stationID);
@@ -466,6 +530,10 @@ public class AggregationServer {
             weatherDataMap.put(stationID, weatherData);
             timestamps.put(stationID, System.currentTimeMillis());
             stations.add(stationID);
+
+            if (LIVE_UPDATES) {
+                System.out.println("Data put successfully");
+            }
 
             // lock to update persistent storage and remove expired/excess stations
             lock.lock();
@@ -478,12 +546,22 @@ public class AggregationServer {
                 lock.unlock();
             }
 
-            // send response (201 for new station, 200 for update)
-            socketOut.println(isNewStation ? "HTTP/1.1 201 Created" : "HTTP/1.1 200 OK");
-            socketOut.println("Content-Type: application/json");
-            socketOut.println("Content-Length: 0");
-            socketOut.println();
+            if (LIVE_UPDATES) {
+                System.out.println("PUT request successfully handled, sending response...");
+            }
 
+            // send response (201 for new station, 200 for update)
+            String RESPONSE =
+                    (isNewStation ? "HTTP/1.1 201 Created" : "HTTP/1.1 200 OK") + "\r\n" +
+                    "Content-Type: text/plain" + "\r\n" +
+                    "Content-Length: 0" + "\r\n" +
+                    "Lamport-Time: " + clock.getTime() + "\r\n\r\n";
+            try {
+                socketOut.write(RESPONSE.getBytes());
+                socketOut.flush();
+            } catch (IOException e) {
+                System.out.println("Error writing to socket...");
+            }
         }
     }
 }

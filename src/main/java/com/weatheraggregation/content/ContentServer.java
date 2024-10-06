@@ -36,43 +36,6 @@ import com.weatheraggregation.utils.LamportClock;
 import com.weatheraggregation.utils.ServerData;
 
 public class ContentServer {
-    /* FUNCTION TO PARSE DATA FROM FILE TO A JSON OBJECT */
-    public static void parseFileJSON(ObjectNode weatherData, String fileName) {
-        // read file using a BufferedReader object with a 1KB buffer
-        // https://www.baeldung.com/java-buffered-reader
-        try (BufferedReader reader = new BufferedReader(new FileReader(fileName), 1024)) {
-            String line;
-            // read line until reader buffer is empty
-            while ((line = reader.readLine()) != null) {
-                // split each line at : char
-                String[] keyValuePair = line.split(":", 2);
-
-                if (keyValuePair.length == 2) {
-                    // remove any leading/trailing whitespace:
-                    String key = keyValuePair[0].trim();
-                    String value = keyValuePair[1].trim();
-
-                    // add key/value pair to weatherData object:
-                    try {
-                        // try parsing value as number
-                        if (value.contains(".")) {
-                            weatherData.put(key, Double.parseDouble(value));
-                        } else {
-                            weatherData.put(key, Integer.parseInt(value));
-                        }
-                    } catch (NumberFormatException e) {
-                        // if exception is thrown then parse as string
-                        weatherData.put(key, value);
-                    }
-                }
-            }
-        } catch (FileNotFoundException ex) {
-            System.out.println("File not found: " + ex.getMessage());
-        } catch (IOException ex) {
-            System.out.println("I/O error: " + ex.getMessage());
-        }
-    }
-
     public static void main(String[] args) {
         if (args.length != 2) {
             // check args
@@ -87,7 +50,7 @@ public class ContentServer {
         // read weather data from file and parse to JSON
         ObjectMapper mapper = new ObjectMapper();
         ObjectNode weatherData = mapper.createObjectNode();
-        parseFileJSON(weatherData, args[0]);
+        parseFileJSON(weatherData, args[1]);
 
         // get stationID from JSON
         JsonNode stationID = weatherData.get("id");
@@ -127,6 +90,43 @@ public class ContentServer {
 
         } catch (UnknownHostException ex) {
             System.out.println("Server not found: " + ex.getMessage());
+        } catch (IOException ex) {
+            System.out.println("I/O error: " + ex.getMessage());
+        }
+    }
+
+    /* FUNCTION TO PARSE DATA FROM FILE TO A JSON OBJECT */
+    public static void parseFileJSON(ObjectNode weatherData, String fileName) {
+        // read file using a BufferedReader object with a 1KB buffer
+        // https://www.baeldung.com/java-buffered-reader
+        try (BufferedReader reader = new BufferedReader(new FileReader(fileName), 1024)) {
+            String line;
+            // read line until reader buffer is empty
+            while ((line = reader.readLine()) != null) {
+                // split each line at : char
+                String[] keyValuePair = line.split(":", 2);
+
+                if (keyValuePair.length == 2) {
+                    // remove any leading/trailing whitespace:
+                    String key = keyValuePair[0].trim();
+                    String value = keyValuePair[1].trim();
+
+                    // add key/value pair to weatherData object:
+                    try {
+                        // try parsing value as number
+                        if (value.contains(".")) {
+                            weatherData.put(key, Double.parseDouble(value));
+                        } else {
+                            weatherData.put(key, Integer.parseInt(value));
+                        }
+                    } catch (NumberFormatException e) {
+                        // if exception is thrown then parse as string
+                        weatherData.put(key, value);
+                    }
+                }
+            }
+        } catch (FileNotFoundException ex) {
+            System.out.println("File not found: " + ex.getMessage());
         } catch (IOException ex) {
             System.out.println("I/O error: " + ex.getMessage());
         }
