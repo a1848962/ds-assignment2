@@ -1,0 +1,17 @@
+id:IDS60903
+name:Brisbane (Airport)
+state:QLD
+time_zone:AEST
+lat:-27.4
+lon:153.1
+local_date_time:17/02:00pm
+local_date_time_full:20230717140000
+air_temp:28.7
+apparent_t:30.1
+cloud:Clear
+dewpt:19.0
+press:1013.2
+rel_hum:65
+wind_dir:N
+wind_spd_kmh:25
+wind_spd_kt:14
