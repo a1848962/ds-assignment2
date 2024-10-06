@@ -42,12 +42,34 @@ public class AggregationServer {
 
     private static final LamportClock clock = new LamportClock(); // initialise clock
 
-    public static void main(String[] args) throws IOException {
+    public static void main(String[] args) {
         // check for alternative port provided as argument, otherwise use default
         int port = args.length > 0 ? Integer.parseInt(args[0]) : DEFAULT_PORT;
 
         // read data from persistent storage if present
         readLocalWD();
+
+        // fork new thread to listen for exit command on stdin
+        new Thread(() -> {
+            try (BufferedReader reader = new BufferedReader(new InputStreamReader(System.in))) {
+                String input;
+                while ((input = reader.readLine()) != null) {
+                    if (input.trim().equals("exit")) {
+                        serverExit(false);  // Exit and retain weather data
+                        break;
+                    } else if (input.trim().equals("exit -r")) {
+                        serverExit(true);  // Exit and remove weather data
+                        break;
+                    } else {
+                        System.out.println("Invalid command: " + input);
+                        System.out.println("'exit' to shut down server and retain all weather data.");
+                        System.out.println("'exit -r' to shut down server and remove all weather data.");
+                    }
+                }
+            } catch (IOException ex) {
+                System.out.println("Error reading shutdown commands: " + ex.getMessage());
+            }
+        }).start();
 
         // start listening on socket
         try (ServerSocket socket = new ServerSocket(port)) {
@@ -64,6 +86,33 @@ public class AggregationServer {
         } catch (IOException ex) {
             System.out.println("I/O error: " + ex.getMessage());
         }
+    }
+
+    /* function to close server. Will remove WD in persistent storage according to removeData bool */
+    private static void serverExit(boolean removeData) {
+        System.out.println("Shutting down...");
+
+        if (removeData) {
+            System.out.println("Removing all persistent weather data from local storage...");
+            // delete stationIDs file
+            File stationIDFile = new File(STATION_ID_STORAGE);
+            if (stationIDFile.exists() && !stationIDFile.delete()) {
+                System.out.println("Error deleting station ID file");
+            }
+
+            // delete all local station files
+            for (String stationID : stations) {
+                File stationFile = new File(stationID);
+                if (stationFile.exists() && !stationFile.delete()) {
+                    System.out.println("Error deleting local file for station " + stationID);
+                }
+            }
+        } else {
+            System.out.println("Weather data will be retained");
+        }
+
+        System.out.println("Server shutdown complete");
+        System.exit(0);
     }
 
     // function to remove any stations exceeding EXPIRY_TIME
@@ -264,20 +313,33 @@ public class AggregationServer {
 
             // read headers and update lamport time
             int clientLamportTime = parseHeaders(socketIn);
-            lock.lock();
-            boolean isCurrentRequest = clock.update(clientLamportTime);
-            lock.unlock();
-
             // confirm lamport-time was sent in request header
             if (clientLamportTime < 0) {
                 returnErrorCode("400 Bad Request", socketOut);
                 return;
             }
 
+
+            lock.lock();
+            try {
+                boolean clientIsAhead = clock.update(clientLamportTime);
+            } finally {
+                lock.unlock();
+            }
+
+//            if (clientIsAhead) {
+//                returnErrorCode("400 Bad Request", socketOut);
+//                return;
+//            }
+
             // remove expired data before building response
             lock.lock();
-            removeExpiredStations();
-            lock.unlock();
+            try {
+                removeExpiredStations();
+            } finally {
+                lock.unlock();
+            }
+
 
             try {
                 ObjectNode responseData; // initialise JSON object to contain response
@@ -303,8 +365,11 @@ public class AggregationServer {
 
                 // increment clock before sending response
                 lock.lock();
-                clock.increment();
-                lock.unlock();
+                try {
+                    clock.increment();
+                } finally {
+                    lock.unlock();
+                }
 
                 // send response with payload
                 socketOut.println("HTTP/1.1 200 OK");
@@ -332,16 +397,24 @@ public class AggregationServer {
 
             // read headers and update lamport time
             int clientLamportTime = parseHeaders(socketIn);
-
-            lock.lock();
-            boolean isCurrentRequest = clock.update(clientLamportTime);
-            lock.unlock();
-
             // confirm lamport-time was sent in request header
             if (clientLamportTime < 0) {
                 returnErrorCode("400 Bad Request", socketOut);
                 return;
             }
+
+            lock.lock();
+            try {
+                boolean clientIsAhead = clock.update(clientLamportTime);
+            } finally {
+                lock.unlock();
+            }
+
+            // currently not sure how to handle lamport clock
+//            if (clientIsAhead) {
+//                returnErrorCode("400 Bad Request", socketOut);
+//                return;
+//            }
 
             // read request payload to string
             StringBuilder jsonContent = new StringBuilder();
@@ -369,25 +442,22 @@ public class AggregationServer {
                 boolean isNewStation = !weatherDataMap.containsKey(stationID);
                 // boolean isNewStation = !stations.contains(stationID);
 
-                // update data if lamport time is current (clientTime >= server clock)
-                if (isCurrentRequest) {
-                    // concurrent hashmap does not require locking for atomic actions
-                    weatherDataMap.put(stationID, weatherData);
-                    timestamps.put(stationID, System.currentTimeMillis());
-                    stations.add(stationID);
+                // update data:
+                // concurrent hashmap does not require locking for atomic actions
+                weatherDataMap.put(stationID, weatherData);
+                timestamps.put(stationID, System.currentTimeMillis());
+                stations.add(stationID);
 
-                    // lock to update persistent storage and remove expired/excess stations
-                    lock.lock();
+                // lock to update persistent storage and remove expired/excess stations
+                lock.lock();
+                try {
                     writeLocalWD(stationID);
                     removeExpiredStations(); // remove expired stations BEFORE removing excess
                     removeExcessStations();
+                    clock.increment(); // increment clock before sending response
+                } finally {
                     lock.unlock();
                 }
-
-                // increment clock before sending response
-                lock.lock();
-                clock.increment();
-                lock.unlock();
 
                 // send response (201 for new station, 200 for update)
                 socketOut.println(isNewStation ? "HTTP/1.1 201 Created" : "HTTP/1.1 200 OK");
