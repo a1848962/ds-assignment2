@@ -369,6 +369,14 @@ public class AggregationServer {
                 System.out.println("Handling GET request...");
             }
 
+            // remove expired data before building response
+            lock.lock();
+            try {
+                removeExpiredStations();
+            } finally {
+                lock.unlock();
+            }
+
             // check requested resource is /weather and isolate stationID if provided
             String[] resourceParts = resource.split("/");
             String stationID = ""; // default if no station is specified
@@ -390,7 +398,6 @@ public class AggregationServer {
                 return;
             }
 
-
             lock.lock();
             try {
                 boolean clientIsAhead = clock.update(clientLamportTime);
@@ -403,32 +410,28 @@ public class AggregationServer {
 //                return;
 //            }
 
-            // remove expired data before building response
-            lock.lock();
-            try {
-                removeExpiredStations();
-            } finally {
-                lock.unlock();
+            if (stations.isEmpty()) {
+                returnErrorCode("404 Not Found", socketOut);
+                return;
             }
 
-
             try {
-                ObjectNode responseData; // initialise JSON object to contain response
+                ObjectNode responseData = new ObjectMapper().createObjectNode(); // initialise JSON object to contain response
                 if (stationID.isEmpty()) {
                     // no station ID specified, return all weather data stored in the AS
-                    responseData = new ObjectMapper().createObjectNode();
                     weatherDataMap.forEach(responseData::set); // this line was provided by a LLM
                     // deliberately not locking around forEach call, it is fine for other threads to modify the map
                     // while building responseData. Removed/added stations will be reflected in responseData.
                 } else {
                     // station ID provided, retrieve corresponding weather data
                     // concurrent hashmap does not require locking for atomic actions
-                    responseData = weatherDataMap.get(stationID);
+                    ObjectNode stationData = weatherDataMap.get(stationID);
                     // if station ID not in map, return 404 error
-                    if (responseData == null) {
+                    if (stationData == null) {
                         returnErrorCode("404 Not Found", socketOut);
                         return;
                     }
+                    responseData.set(stationID, stationData); // wrap response in set for parsing at client
                 }
 
                 // parse response data to JSON string

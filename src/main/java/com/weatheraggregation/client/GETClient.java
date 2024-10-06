@@ -17,89 +17,155 @@ import com.weatheraggregation.utils.*;
 
 import java.io.*;
 import java.net.*;
+import java.util.HashMap;
 import java.util.Iterator;
 import java.util.Map;
+import java.util.Scanner;
 
 public class GETClient {
-    public static void main(String[] args) {
-        String stationID = "";
-        if (args.length == 2) {
-            stationID = args[1];
-        } else if (args.length != 1) {
-            throw new IllegalArgumentException(
-                    "Expected one argument specifying connection information, optionally followed by a station ID");
+    private static final int MAX_RETRY_COUNT = 3;
+    private static int retryCount = 0;
+
+    public static void main(String[] args) throws IOException {
+        if (args.length != 1) {
+            throw new IllegalArgumentException("Expected one argument specifying connection information.");
         }
 
+        ServerData server = new ServerData(args[0]); // parse arg into ServerData object to store connection information
         LamportClock clock = new LamportClock(); // initialise clock
+        Scanner scanner = new Scanner(System.in);
 
-        // parse arg into ServerData object to store connection information
-        ServerData server = new ServerData(args[0]);
+        System.out.println("Usage:");
+        System.out.println(" - 'all' to request all data");
+        System.out.println(" - '[station ID]' to request a specific station");
+        System.out.println(" - 'exit' to close client");
 
-        // increment clock before sending request
-        clock.increment();
+        // Loop to continuously listen for user input
+        while (true) {
+            String input = scanner.nextLine().trim();
 
-        // send GET request with lamport time
-        String GET_REQUEST = "GET /weather/" + stationID + " HTTP/1.1\r\n" +
-                "Host: " + server.name + server.domain + "\r\n" +
-                "Lamport-Time: " + clock.getTime() + "\r\n\r\n";
+            if (input.equalsIgnoreCase("exit")) {
+                System.out.println("Exiting...");
+                break;
+            }
 
-        // establish connection to server through socket
-        try (Socket socket = new Socket(server.name, server.port)) {
-            // create an OutputStream to write to socket out, and a BufferedReader to read from socket in
-            OutputStream socketOut = socket.getOutputStream();
-            BufferedReader socketIn = new BufferedReader(new InputStreamReader(socket.getInputStream()));
+            String stationID = input.equalsIgnoreCase("all") ? "" : input;
 
-            socketOut.write(GET_REQUEST.getBytes());
-            socketOut.flush();
+            // Increment clock before sending request
+            clock.increment();
 
-            String statusLine = socketIn.readLine();
-            System.out.println("Received response: " + statusLine);
-            Map<String, String> headers = ParsingUtils.parseHeaders(socketIn);
-            int clientLamportTime = Integer.parseInt(headers.get("Lamport-Time"));
+            // send GET request with lamport time
+            String GET_REQUEST = "GET /weather/" + stationID + " HTTP/1.1\r\n" +
+                    "Host: " + server.name + server.domain + "\r\n" +
+                    "Lamport-Time: " + clock.getTime() + "\r\n\r\n";
+
+            boolean success = false;
+            Map<String, String> headers = new HashMap<>();
+            int clientLamportTime = -1;
+            BufferedReader socketIn = null;
+            while (retryCount < MAX_RETRY_COUNT) {
+                // establish connection to server through socket
+                try (Socket socket = new Socket(server.name, server.port)) {
+                    // create an OutputStream to write to socket out, and a BufferedReader to read from socket in
+                    OutputStream socketOut = socket.getOutputStream();
+                    socketIn = new BufferedReader(new InputStreamReader(socket.getInputStream()));
+
+                    socketOut.write(GET_REQUEST.getBytes());
+                    socketOut.flush();
+
+                    String statusLine = socketIn.readLine();
+                    System.out.println("Server response: " + statusLine);
+                    headers = ParsingUtils.parseHeaders(socketIn);
+                    clientLamportTime = Integer.parseInt(headers.get("Lamport-Time"));
+
+                    String[] statusSplit = statusLine.split(" ");
+                    if (statusSplit[1].startsWith("2")) {
+                        // status code 2XX OK
+                        success = true;
+                        // close streams
+                        socketOut.close();
+                        break;
+                    } else if (statusSplit[1].startsWith("5") || statusSplit[1].equals("404")) {
+                        // status code 5XX Internal Server Error
+                        // status code 404 Not Found
+                        // retry
+                        retryCount++;
+                    } else {
+                        // status code indicates client-side error
+                        // close streams
+                        socketOut.close();
+                        break;
+                    }
+
+                    // close streams
+                    socketOut.close();
+                    } catch (Exception ex){
+                    System.out.println("Server not found: " + ex.getMessage());
+                    System.out.println("Please enter new connection details or press enter to try again:");
+                    input = scanner.nextLine().trim();
+                    if (input.equalsIgnoreCase("exit")) {
+                        System.out.println("Exiting...");
+                        break;
+                    } else if (!input.isEmpty()) {
+                        try {
+                            server = new ServerData(input);
+                        } catch (Exception serverException) {
+                            System.out.println("Error parsing server data: " + serverException.getMessage());
+                        }
+                    }
+                }
+            }
+
+            // if request was not successful, reset retryCount and skip this iteration
+            if (!success) {
+                System.out.println(retryCount == MAX_RETRY_COUNT ?
+                        "Request failed, reached retry limit." :
+                        "Status code indicates client-side error. Please try another request.");
+                retryCount = 0;
+                continue;
+            }
 
             // TO-DO: handle lamport clock
-
             // parse remainder of socketIn buffer (payload) to JSON
             String[] jsonErrorCode = new String[2]; // string to hold error code
             ObjectNode weatherData = ParsingUtils.parseJSON(socketIn, jsonErrorCode, headers);
 
             if (weatherData != null) {
-                // following code to print formatted JSON was assisted by a LLM
-                try {
-                    Iterator<Map.Entry<String, JsonNode>> fields = weatherData.fields();
-
-                    while (fields.hasNext()) {
-                        Map.Entry<String, JsonNode> entry = fields.next();
-                        ObjectNode stationData = (ObjectNode) entry.getValue();
-
-                        // Iterate over the fields in the stationData and print each key-value pair
-                        Iterator<Map.Entry<String, JsonNode>> stationFields = stationData.fields();
-                        Map.Entry<String, JsonNode> id = stationFields.next();
-                        System.out.println("## WEATHER DATA FOR " + id.getValue().asText() + " ##");
-
-                        while (stationFields.hasNext()) {
-                            Map.Entry<String, JsonNode> field = stationFields.next();
-                            System.out.println(field.getKey() + ": " + field.getValue().asText());
-                        }
-
-                        System.out.println();
-                    }
-                } catch (Exception ex) {
-                    System.out.println("Error printing weather data: " + ex.getMessage());
-                }
-                // end LLM assisted code
+                // print formatted JSON weather data
+                printWeatherData(weatherData);
             } else {
                 // print clientside error message jsonErrorCode[1]
                 System.out.println(jsonErrorCode[1]);
             }
 
-            // close streams
-            socketIn.close();
-            socketOut.close();
-        } catch (UnknownHostException ex) {
-            System.out.println("Server not found: " + ex.getMessage());
-        } catch (IOException ex) {
-            System.out.println("I/O error: " + ex.getMessage());
+            retryCount = 0;
+        }
+    }
+
+    /* function to print JSON in a neat custom format */
+    // this function was assisted by a LLM
+    private static void printWeatherData(ObjectNode weatherData) {
+        try {
+            Iterator<Map.Entry<String, JsonNode>> fields = weatherData.fields();
+
+            while (fields.hasNext()) {
+                Map.Entry<String, JsonNode> entry = fields.next();
+                ObjectNode stationData = (ObjectNode) entry.getValue();
+
+                // iterate over the fields in stationData and print each key-value pair
+                Iterator<Map.Entry<String, JsonNode>> stationFields = stationData.fields();
+                Map.Entry<String, JsonNode> id = stationFields.next();
+                System.out.println("## WEATHER DATA FOR " + id.getValue().asText() + " ##");
+
+                while (stationFields.hasNext()) {
+                    Map.Entry<String, JsonNode> field = stationFields.next();
+                    System.out.println(field.getKey() + ": " + field.getValue().asText());
+                }
+
+                System.out.println();
+            }
+        } catch (Exception ex) {
+            System.out.println("Error printing weather data: " + ex.getMessage());
         }
     }
 }
