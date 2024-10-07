@@ -31,69 +31,83 @@ import com.weatheraggregation.utils.ParsingUtils;
 public class AggregationServer {
     private static final boolean LIVE_UPDATES = true;
     private static final int DEFAULT_PORT = 4567;
-    private static final int EXPIRY_TIME = 10 * 1000; // 30 seconds
+    private static final int EXPIRY_TIME = 30 * 1000; // 30 seconds
     private static final int MAX_STATIONS = 20; // do not hold data for more than 20 stations
     private static final String STATION_ID_STORAGE = "station_ids";
 
     // store weather data in a concurrent hashmap. Concurrent hashmap is used over the
     // traditional hashmap as it is optimised for multithreaded use.
-    private static final Map<String, ObjectNode> weatherDataMap = new ConcurrentHashMap<>();
-    private static final Map<String, Long> timestamps = new ConcurrentHashMap<>();
-    private static final Set<String> stations = new HashSet<>();
-    private static final ReentrantLock lock = new ReentrantLock();
+    private final Map<String, ObjectNode> weatherDataMap = new ConcurrentHashMap<>();
+    private final Map<String, Long> timestamps = new ConcurrentHashMap<>();
+    private final Set<String> stations = new HashSet<>();
+    private final ReentrantLock lock = new ReentrantLock();
 
-    private static final LamportClock clock = new LamportClock(); // initialise clock
+    private final LamportClock clock = new LamportClock(); // initialise clock
+
+    private final int port;
+    private ServerSocket serverSocket;
+
+    public AggregationServer(int port) {
+        this.port = port;
+    }
 
     public static void main(String[] args) {
-        // check for alternative port provided as argument, otherwise use default
         int port = args.length > 0 ? Integer.parseInt(args[0]) : DEFAULT_PORT;
+        // create server on default port unless one is provided
+        AggregationServer server = new AggregationServer(port);
 
-        // read data from persistent storage if present
-        readLocalWD();
-
-        // start listening on socket
-        try (ServerSocket socket = new ServerSocket(port)) {
-            System.out.println("Aggregation server running on port " + port);
-            System.out.println("Usage:");
-            System.out.println("'exit' to shut down server and retain all weather data.");
-            System.out.println("'exit -r' to shut down server and remove all weather data.");
-
-            // fork new thread to listen for exit command on stdin
-            new Thread(() -> {
-                try (BufferedReader reader = new BufferedReader(new InputStreamReader(System.in))) {
-                    String input;
-                    while ((input = reader.readLine()) != null) {
-                        if (input.trim().equals("exit")) {
-                            serverExit(false, socket);  // Exit and retain weather data
-                            break;
-                        } else if (input.trim().equals("exit -r")) {
-                            serverExit(true, socket);  // Exit and remove weather data
-                            break;
-                        } else {
-                            System.out.println("Invalid command: " + input);
-                            System.out.println("Usage:");
-                            System.out.println("'exit' to shut down server and retain all weather data.");
-                            System.out.println("'exit -r' to shut down server and remove all weather data.");
-                        }
-                    }
-                } catch (IOException ex) {
-                    System.out.println("Error reading shutdown commands: " + ex.getMessage());
-                }
-            }).start();
-
-            // TO-DO: implement exit commands
-            while (true) {
-                Socket clientSocket = socket.accept();
-                // accept connection and fork to handle
-                new Thread(new ConnectionHandler(clientSocket)).start();
-            }
+        try {
+            server.start(); // start server
         } catch (IOException ex) {
-            System.out.println("I/O error: " + ex.getMessage());
+            System.out.println("Error starting server: " + ex.getMessage());
         }
     }
 
+    public void start() throws IOException {
+        readLocalWD(); // read data from persistent storage
+
+        serverSocket = new ServerSocket(port); // create socket
+
+        System.out.println("Aggregation server running on port " + port);
+        System.out.println("Usage:");
+        System.out.println("'exit' to shut down server and retain all weather data.");
+        System.out.println("'exit -r' to shut down server and remove all weather data.");
+        listenForExit(); // fork thread to listen for exit commands on stdin
+
+        // start listening on socket
+        while (!serverSocket.isClosed()) {
+            Socket clientSocket = serverSocket.accept();
+            new Thread(new ConnectionHandler(clientSocket)).start(); // Handle client in a new thread
+        }
+    }
+
+    /* function to listen on stdin for exit command, and shut down server if received) */
+    private void listenForExit() {
+        new Thread(() -> {
+            try (BufferedReader reader = new BufferedReader(new InputStreamReader(System.in))) {
+                String input;
+                while ((input = reader.readLine()) != null) {
+                    if (input.trim().equals("exit")) {
+                        close(false, serverSocket);  // exit and retain weather data
+                        break;
+                    } else if (input.trim().equals("exit -r")) {
+                        close(true, serverSocket);  // exit and remove weather data
+                        break;
+                    } else {
+                        System.out.println("Invalid command: " + input);
+                        System.out.println("Usage:");
+                        System.out.println("'exit' to shut down server and retain all weather data.");
+                        System.out.println("'exit -r' to shut down server and remove all weather data.");
+                    }
+                }
+            } catch (IOException ex) {
+                System.out.println("Error reading shutdown commands: " + ex.getMessage());
+            }
+        }).start();
+    }
+
     /* function to close server. Will remove WD in persistent storage according to removeData bool */
-    private static void serverExit(boolean removeData, ServerSocket socket) {
+    private void close(boolean removeData, ServerSocket socket) {
         System.out.println("Shutting down...");
 
         if (removeData) {
@@ -129,7 +143,7 @@ public class AggregationServer {
     }
 
     // function to remove any stations exceeding EXPIRY_TIME
-    private static void removeExpiredStations() {
+    private void removeExpiredStations() {
         if (LIVE_UPDATES) {System.out.println("Removing expired stations...");}
 
         // use a set to store stationIDs of expired data
@@ -166,7 +180,7 @@ public class AggregationServer {
     }
 
     // function to remove oldest station if MAX_STATIONS is exceeded
-    private static void removeExcessStations() {
+    private void removeExcessStations() {
         // This function is called after every PUT, so weatherDataMap.size() should
         // never be more than 1 over MAX_STATIONS. Therefore, only the oldest station
         // needs to be removed.
@@ -200,7 +214,7 @@ public class AggregationServer {
     }
 
     /* function to update persistent storage of stations set */
-    private static void updateStationsFile() {
+    private void updateStationsFile() {
         if (LIVE_UPDATES) {System.out.println("Updating stations file...");}
         File stationIDFile = new File(STATION_ID_STORAGE);
         try (FileWriter writer = new FileWriter(stationIDFile)) {
@@ -213,7 +227,7 @@ public class AggregationServer {
     }
 
     /* function to overwrite local weather data file for provided station with current weatherDataMap */
-    private static void writeLocalWD(String stationID) {
+    private void writeLocalWD(String stationID) {
         if (LIVE_UPDATES) {System.out.println("Writing local data for station " + stationID + "...");}
 
         // retrieve station weatherdata from map
@@ -240,7 +254,7 @@ public class AggregationServer {
 
     /* function to overwrite stationID data in map with contents of local file */
     // this function was written with the assistance of AI
-    private static void readLocalWD() {
+    private void readLocalWD() {
         if (LIVE_UPDATES) {System.out.println("Reading local data...");}
 
         File stationIDFile = new File(STATION_ID_STORAGE);
@@ -292,7 +306,7 @@ public class AggregationServer {
         }
     }
 
-    private static class ConnectionHandler implements Runnable {
+    private class ConnectionHandler implements Runnable {
         private final Socket socket;
 
         public ConnectionHandler(Socket clientSocket) {
@@ -383,7 +397,14 @@ public class AggregationServer {
             }
 
             // parse headers and update lamport time
-            Map<String, String> headers = ParsingUtils.parseHeaders(socketIn);
+            Map<String, String> headers;
+            try {
+                headers = ParsingUtils.parseHeaders(socketIn);
+            } catch (IOException ex) {
+                System.out.println("Error reading headers: " + ex.getMessage());
+                returnErrorCode("400 Bad Request", socketOut);
+                return;
+            }
             int clientLamportTime = Integer.parseInt(headers.get("Lamport-Time"));
 
             // confirm lamport-time was sent in request header
@@ -398,11 +419,6 @@ public class AggregationServer {
             } finally {
                 lock.unlock();
             }
-
-//            if (clientIsAhead) {
-//                returnErrorCode("400 Bad Request", socketOut);
-//                return;
-//            }
 
             if (stations.isEmpty()) {
                 returnErrorCode("404 Not Found", socketOut);
@@ -475,7 +491,16 @@ public class AggregationServer {
             String stationID = resourceParts[2].trim();
 
             // read headers and update lamport time
-            Map<String, String> headers = ParsingUtils.parseHeaders(socketIn);
+            // parse headers and update lamport time
+            Map<String, String> headers;
+            try {
+                headers = ParsingUtils.parseHeaders(socketIn);
+            } catch (IOException ex) {
+                System.out.println("Error reading headers: " + ex.getMessage());
+                returnErrorCode("400 Bad Request", socketOut);
+                return;
+            }
+
             int clientLamportTime = Integer.parseInt(headers.get("Lamport-Time"));
 
             // confirm lamport-time was sent in request header

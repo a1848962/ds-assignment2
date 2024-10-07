@@ -38,115 +38,50 @@ import com.weatheraggregation.utils.ServerData;
 
 public class ContentServer {
     private static final int MAX_RETRY_COUNT = 3;
-    private static int retryCount = 0;
+
+    private int retryCount = 0;
+    private boolean running = true;
+    private final LamportClock clock;
+    private ServerData server;
+    private final String localData;
+    private final Scanner scanner = new Scanner(System.in); // to read inputs
+
+    public ContentServer(String serverInfo, String localData) {
+        this.clock = new LamportClock();
+        this.server = new ServerData(serverInfo);
+        this.localData = localData;
+    }
 
     public static void main(String[] args) {
         if (args.length != 2) {
-            // check args
             throw new IllegalArgumentException("Expected two arguments: connection information and data filename.");
         }
+        ContentServer contentServer = new ContentServer(args[0], args[1]);
+        contentServer.start();
+    }
 
-        LamportClock clock = new LamportClock(); // initialise clock
-        Scanner scanner = new Scanner(System.in); // scanner to read inputs from command line
-        ServerData server = new ServerData(args[0]); // parse arg into ServerData object to store connection information
-
+    public void start() {
         System.out.println("Usage:");
         System.out.println(" - 'update' to resend weather data");
         System.out.println(" - 'exit' to close content server");
 
-        while (true) {
+        // loop while running flag is true
+        while (running) {
+            // read input and parse
             String input = scanner.nextLine().trim();
 
             if (input.equalsIgnoreCase("exit")) {
                 System.out.println("Exiting...");
-                break;
+                close();
             } else if (!input.equalsIgnoreCase("update")) {
-                System.out.println("Usage:");
+                System.out.println("Invalid command. Usage:");
                 System.out.println(" - 'update' to resend weather data");
                 System.out.println(" - 'exit' to close content server");
                 continue;
             }
 
-            // read weather data from file and parse to JSON
-            ObjectMapper mapper = new ObjectMapper();
-            ObjectNode weatherData = mapper.createObjectNode();
-            parseFileJSON(weatherData, args[1]);
+            boolean success = sendPutRequest();
 
-            // get stationID from JSON
-            JsonNode stationID = weatherData.get("id");
-
-            // build the PUT request from the connection data and the weather data
-            String weatherDataString = weatherData.toString();
-            String PUT_REQUEST = "PUT /weather/" + stationID.asText() + " HTTP/1.1\r\n" +
-                    "Host: " + server.name + server.domain + "\r\n" +
-                    "User-Agent: ATOMClient/1/0\r\n" +
-                    "Content-Type: application/json\r\n" +
-                    "Content-Length: " + weatherDataString.getBytes().length + "\r\n" +
-                    "Lamport-Time: " + clock.getTime() + "\r\n\r\n" +
-                    weatherDataString + "\r\n"; // JSON body
-
-            // increment clock before sending request
-            clock.increment();
-
-            boolean success = false;
-            while (retryCount < MAX_RETRY_COUNT) {
-                // establish connection to server through socket
-                try (Socket socket = new Socket(server.name, server.port)) {
-                    // create an OutputStream to write to socket out, and a BufferedReader to read from socket in
-                    OutputStream socketOut = socket.getOutputStream();
-                    BufferedReader socketIn = new BufferedReader(new InputStreamReader(socket.getInputStream()));
-
-                    System.out.println("Sending weather data for station " + stationID.asText() + "...");
-                    // send PUT request with lamport time
-                    socketOut.write(PUT_REQUEST.getBytes());
-                    socketOut.flush();
-
-                    /*   - First time weather data is received and the storage file is created, return status 201 - HTTP_CREATED
-                     *   - If later uploads (updates) are successful, you should return status 200
-                     *   - Any request other than GET or PUT should return status 400
-                     *   - Sending no content to the server should return status 204
-                     *   - Sending invalid JSON data (JSON does not make sense) should return status 500
-                     */
-
-                    String statusLine = socketIn.readLine();
-                    System.out.println("Server Response: " + statusLine);
-                    String[] statusSplit = statusLine.split(" ");
-
-                    if (statusSplit[1].startsWith("5")) {
-                        System.out.println("Invalid JSON or internal server error, retrying...");
-                        retryCount++;
-                    } else if (statusSplit[1].equals("204")) {
-                        System.out.println("Server received PUT request with no payload, retrying...");
-                        retryCount++;
-                    } else if (statusSplit[1].startsWith("2")) {
-                        // 200 OK, break loop
-                        socketOut.close();
-                        success = true;
-                        retryCount = 0;
-                        break;
-                    } else {
-                        // status code indicates client-side error
-                        // close streams
-                        System.out.println("Server response indicates invalid request. Please try another request.");
-                        socketOut.close();
-                        break;
-                    }
-                } catch (Exception ex) {
-                    System.out.println("Server not found: " + ex.getMessage());
-                    System.out.println("Please enter new connection details or press enter to try again:");
-                    input = scanner.nextLine().trim();
-                    if (input.equalsIgnoreCase("exit")) {
-                        System.out.println("Exiting...");
-                        return;
-                    } else if (!input.isEmpty()) {
-                        try {
-                            server = new ServerData(input);
-                        } catch (Exception serverException) {
-                            System.out.println("Error parsing server data: " + serverException.getMessage());
-                        }
-                    }
-                }
-            }
             if (!success) {
                 System.out.println(retryCount == MAX_RETRY_COUNT ?
                         "Request failed, reached retry limit." :
@@ -154,6 +89,95 @@ public class ContentServer {
                 retryCount = 0;
             }
         }
+    }
+
+    public boolean sendPutRequest() {
+        // read weather data from file and parse to JSON
+        ObjectMapper mapper = new ObjectMapper();
+        ObjectNode weatherData = mapper.createObjectNode();
+        parseFileJSON(weatherData, localData);
+
+        // get stationID from JSON
+        JsonNode stationID = weatherData.get("id");
+
+        // build the PUT request from the connection data and the weather data
+        String weatherDataString = weatherData.toString();
+        String PUT_REQUEST = "PUT /weather/" + stationID.asText() + " HTTP/1.1\r\n" +
+                "Host: " + server.name + server.domain + "\r\n" +
+                "User-Agent: ATOMClient/1/0\r\n" +
+                "Content-Type: application/json\r\n" +
+                "Content-Length: " + weatherDataString.getBytes().length + "\r\n" +
+                "Lamport-Time: " + clock.getTime() + "\r\n\r\n" +
+                weatherDataString + "\r\n"; // JSON body
+
+        clock.increment(); // increment clock before sending request
+
+        boolean success = false;
+        while (retryCount < MAX_RETRY_COUNT) {
+            // establish connection to server through socket
+            try (Socket socket = new Socket(server.name, server.port)) {
+                // create an OutputStream to write to socket out, and a BufferedReader to read from socket in
+                OutputStream socketOut = socket.getOutputStream();
+                BufferedReader socketIn = new BufferedReader(new InputStreamReader(socket.getInputStream()));
+
+                System.out.println("Sending weather data for station " + stationID.asText() + "...");
+                // send PUT request with lamport time
+                socketOut.write(PUT_REQUEST.getBytes());
+                socketOut.flush();
+
+                String statusLine = socketIn.readLine();
+                System.out.println("Server Response: " + statusLine);
+                String[] statusSplit = statusLine.split(" ");
+
+                if (statusSplit[1].startsWith("5")) {
+                    System.out.println("Invalid JSON or internal server error, retrying...");
+                    retryCount++;
+                } else if (statusSplit[1].equals("204")) {
+                    System.out.println("Server received PUT request with no payload, retrying...");
+                    retryCount++;
+                } else if (statusSplit[1].startsWith("2")) {
+                    // 200 OK, break loop
+                    socketOut.close();
+                    success = true;
+                    retryCount = 0;
+                    break;
+                } else {
+                    // status code indicates client-side error
+                    // close streams
+                    System.out.println("Server response indicates invalid request. Please try another request.");
+                    socketOut.close();
+                    break;
+                }
+            } catch (Exception ex) {
+                handleConnectionError(ex);
+            }
+        }
+        return success;
+    }
+
+    /* function to handle failure to connect to server and provide option to enter new server address */
+    private void handleConnectionError(Exception ex) {
+        System.out.println("Server not found: " + ex.getMessage());
+        System.out.println("Please enter new connection details or press enter to try again:");
+        String input = scanner.nextLine().trim();
+        if (input.equalsIgnoreCase("exit")) {
+            close();
+        } else if (!input.isEmpty()) {
+            try {
+                server = new ServerData(input);
+            } catch (Exception e) {
+                System.out.println("Error parsing server data: " + e.getMessage());
+            }
+        }
+    }
+
+    // function to stop the server and clear resources
+    public void close() {
+        System.out.println("Shutting down content server...");
+        running = false;  // stop main loop
+        scanner.close(); // close input scanner
+        System.out.println("Successfully shut down server");
+        System.exit(0);
     }
 
     /* FUNCTION TO PARSE DATA FROM FILE TO A JSON OBJECT */

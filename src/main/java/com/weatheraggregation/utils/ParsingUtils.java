@@ -12,21 +12,17 @@ public class ParsingUtils {
     /* Function to read from socketIn buffer until empty line (signalling start of
      * payload) or end of message is reached. Returns headers parsed into a hashmap.
      * Note: assumes request/status line has already been read. */
-    public static Map<String, String> parseHeaders(BufferedReader socketIn) {
+    public static Map<String, String> parseHeaders(BufferedReader socketIn) throws IOException {
         Map<String, String> headers = new HashMap<>();
-        try {
-            String line = socketIn.readLine();
-            while (line != null && !line.isEmpty()) {
-                String[] lineSplit = line.split(":");
-                if (lineSplit.length == 2) {
-                    headers.put(lineSplit[0].trim(), lineSplit[1].trim());
-                } else {
-                    throw new IOException("Invalid header line: " + line);
-                }
-                line = socketIn.readLine();
+        String line = socketIn.readLine();
+        while (line != null && !line.isEmpty()) {
+            String[] lineSplit = line.split(":");
+            if (lineSplit.length == 2) {
+                headers.put(lineSplit[0].trim(), lineSplit[1].trim());
+            } else {
+                throw new IOException("Invalid header line: " + line);
             }
-        } catch (IOException ex) {
-            System.out.println("Error reading headers: " + ex.getMessage());
+            line = socketIn.readLine();
         }
         return headers;
     }
@@ -66,7 +62,7 @@ public class ParsingUtils {
             return (ObjectNode) new ObjectMapper().readTree(jsonContent);
         } catch (Exception ex) {
             errorCode[0] = "500 Internal Server Error";
-            errorCode[1] = "Error parsing payload to JSON: " + ex.getMessage();
+            errorCode[1] = "Invalid JSON: " + ex.getMessage();
             return null;
         }
     }
