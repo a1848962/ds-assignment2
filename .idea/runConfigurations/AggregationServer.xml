@@ -2,6 +2,7 @@
   <configuration default="false" name="AggregationServer" type="Application" factoryName="Application" nameIsGenerated="true">
     <option name="MAIN_CLASS_NAME" value="com.weatheraggregation.server.AggregationServer" />
     <module name="assignment2" />
+    <option name="PROGRAM_PARAMETERS" value="4567" />
     <extension name="coverage">
       <pattern>
         <option name="PATTERN" value="com.weatheraggregation.server.*" />
