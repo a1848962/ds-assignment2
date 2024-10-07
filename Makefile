@@ -15,14 +15,14 @@ run-gc:
 
 
 # RUN WITH PREFILLED ARGUMENTS (DEFAULT / TESTING VALUES)
-run-cs-auto1:
-	mvn exec:java -Dexec.mainClass=$(CONTENT_SERVER) -Dexec.args="localhost:4567 data/data1"
+run-cs-test1:
+	make run-cs SERVER="localhost:4567" WD_FILE="data/data1"
 
-run-cs-auto2:
-	mvn exec:java -Dexec.mainClass=$(CONTENT_SERVER) -Dexec.args="localhost:4567 data/data2"
+run-cs-test2:
+	make run-cs SERVER="localhost:4567" WD_FILE="data/data2"
 
-run-cs-auto3:
-	mvn exec:java -Dexec.mainClass=$(CONTENT_SERVER) -Dexec.args="localhost:4567 data/data3"
+run-cs-test3:
+	make run-cs SERVER="localhost:4567" WD_FILE="data/data3"
 
-run-gc-auto:
-	mvn exec:java -Dexec.mainClass=$(GET_CLIENT) -Dexec.args="localhost:4567"
+run-gc-test:
+	make run-gc SERVER="localhost:4567"

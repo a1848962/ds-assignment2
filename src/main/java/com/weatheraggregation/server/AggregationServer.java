@@ -31,7 +31,7 @@ import com.weatheraggregation.utils.ParsingUtils;
 public class AggregationServer {
     private static final boolean LIVE_UPDATES = true;
     private static final int DEFAULT_PORT = 4567;
-    private static final int EXPIRY_TIME = 120 * 1000; // 2 MINS FOR TESTING, REVERT TO 30 seconds
+    private static final int EXPIRY_TIME = 10 * 1000; // 30 seconds
     private static final int MAX_STATIONS = 20; // do not hold data for more than 20 stations
     private static final String STATION_ID_STORAGE = "station_ids";
 
@@ -281,6 +281,14 @@ public class AggregationServer {
             } else {
                 System.out.println("Warning: Weather data file for station " + stationID + " not found.");
             }
+        }
+
+        // remove expired data before handling request
+        lock.lock();
+        try {
+            removeExpiredStations();
+        } finally {
+            lock.unlock();
         }
     }
 
