@@ -27,13 +27,22 @@ public class GETClient {
     private static int retryCount = 0;
 
     public static void main(String[] args) throws IOException {
-        if (args.length != 1) {
-            throw new IllegalArgumentException("Expected one argument specifying connection information.");
-        }
-
-        ServerData server = new ServerData(args[0]); // parse arg into ServerData object to store connection information
         LamportClock clock = new LamportClock(); // initialise clock
         Scanner scanner = new Scanner(System.in);
+
+        // get server address from args, or request if not provided.
+        String serverAddress;
+        if (args.length < 1) {
+            System.out.println("Please enter aggregation server address in one of the following formats:");
+            System.out.println(" - http://servername.domain.domain:portnumber");
+            System.out.println(" - http://servername:portnumber");
+            System.out.println(" - servername:portnumber");
+            serverAddress = scanner.nextLine().trim();
+        } else {
+            serverAddress = args[0];
+        }
+
+        ServerData server = new ServerData(serverAddress); // parse arg into ServerData object to store connection information
 
         System.out.println("Usage:");
         System.out.println(" - 'all' to request all data");
@@ -99,13 +108,13 @@ public class GETClient {
 
                     // close streams
                     socketOut.close();
-                    } catch (Exception ex){
+                } catch (Exception ex) {
                     System.out.println("Server not found: " + ex.getMessage());
                     System.out.println("Please enter new connection details or press enter to try again:");
                     input = scanner.nextLine().trim();
                     if (input.equalsIgnoreCase("exit")) {
                         System.out.println("Exiting...");
-                        break;
+                        return;
                     } else if (!input.isEmpty()) {
                         try {
                             server = new ServerData(input);
@@ -120,7 +129,7 @@ public class GETClient {
             if (!success) {
                 System.out.println(retryCount == MAX_RETRY_COUNT ?
                         "Request failed, reached retry limit." :
-                        "Status code indicates client-side error. Please try another request.");
+                        "Server response indicates invalid request. Please try another request.");
                 retryCount = 0;
                 continue;
             }

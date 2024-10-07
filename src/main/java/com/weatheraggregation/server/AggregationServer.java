@@ -54,6 +54,7 @@ public class AggregationServer {
         // start listening on socket
         try (ServerSocket socket = new ServerSocket(port)) {
             System.out.println("Aggregation server running on port " + port);
+            System.out.println("Usage:");
             System.out.println("'exit' to shut down server and retain all weather data.");
             System.out.println("'exit -r' to shut down server and remove all weather data.");
 
@@ -70,6 +71,7 @@ public class AggregationServer {
                             break;
                         } else {
                             System.out.println("Invalid command: " + input);
+                            System.out.println("Usage:");
                             System.out.println("'exit' to shut down server and retain all weather data.");
                             System.out.println("'exit -r' to shut down server and remove all weather data.");
                         }
@@ -128,9 +130,7 @@ public class AggregationServer {
 
     // function to remove any stations exceeding EXPIRY_TIME
     private static void removeExpiredStations() {
-        if (LIVE_UPDATES) {
-            System.out.println("Removing expired stations...");
-        }
+        if (LIVE_UPDATES) {System.out.println("Removing expired stations...");}
 
         // use a set to store stationIDs of expired data
         Set<String> expiredStations = new HashSet<>();
@@ -170,9 +170,7 @@ public class AggregationServer {
         // This function is called after every PUT, so weatherDataMap.size() should
         // never be more than 1 over MAX_STATIONS. Therefore, only the oldest station
         // needs to be removed.
-        if (LIVE_UPDATES) {
-            System.out.println("Removing excess stations...");
-        }
+        if (LIVE_UPDATES) {System.out.println("Removing excess stations...");}
 
         if (stations.size() > MAX_STATIONS) {
             long oldestTimestamp = Long.MAX_VALUE; // hold the smallest timestamp (oldest station)
@@ -203,9 +201,7 @@ public class AggregationServer {
 
     /* function to update persistent storage of stations set */
     private static void updateStationsFile() {
-        if (LIVE_UPDATES) {
-            System.out.println("Updating stations file...");
-        }
+        if (LIVE_UPDATES) {System.out.println("Updating stations file...");}
         File stationIDFile = new File(STATION_ID_STORAGE);
         try (FileWriter writer = new FileWriter(stationIDFile)) {
             for (String id : stations) {
@@ -218,9 +214,7 @@ public class AggregationServer {
 
     /* function to overwrite local weather data file for provided station with current weatherDataMap */
     private static void writeLocalWD(String stationID) {
-        if (LIVE_UPDATES) {
-            System.out.println("Writing local data for station " + stationID + "...");
-        }
+        if (LIVE_UPDATES) {System.out.println("Writing local data for station " + stationID + "...");}
 
         // retrieve station weatherdata from map
         ObjectMapper mapper = new ObjectMapper();
@@ -247,9 +241,7 @@ public class AggregationServer {
     /* function to overwrite stationID data in map with contents of local file */
     // this function was written with the assistance of AI
     private static void readLocalWD() {
-        if (LIVE_UPDATES) {
-            System.out.println("Reading local data...");
-        }
+        if (LIVE_UPDATES) {System.out.println("Reading local data...");}
 
         File stationIDFile = new File(STATION_ID_STORAGE);
 
@@ -302,9 +294,7 @@ public class AggregationServer {
         // override run to handle new connections
         @Override
         public void run() {
-            if (LIVE_UPDATES) {
-                System.out.println("New connection accepted...");
-            }
+            if (LIVE_UPDATES) {System.out.println("New connection accepted...");}
             // use a outputsteam for writing to socket, and a bufferedreader for reading
             // declare outside of try block to allow socket closing in finally block
             OutputStream socketOut = null;
@@ -346,9 +336,7 @@ public class AggregationServer {
         }
 
         private void returnErrorCode(String errorCode, OutputStream socketOut) {
-            if (LIVE_UPDATES) {
-                System.out.println("Returning error code " + errorCode + "...");
-            }
+            if (LIVE_UPDATES) {System.out.println("Returning error code " + errorCode + "...");}
 
             String RESPONSE =
                     "HTTP/1.1 " + errorCode + "\r\n" +
@@ -365,9 +353,7 @@ public class AggregationServer {
         }
 
         private void handleGet(BufferedReader socketIn, OutputStream socketOut, String resource) {
-            if (LIVE_UPDATES) {
-                System.out.println("Handling GET request...");
-            }
+            if (LIVE_UPDATES) {System.out.println("Handling GET request...");}
 
             // remove expired data before building response
             lock.lock();
@@ -428,6 +414,7 @@ public class AggregationServer {
                     ObjectNode stationData = weatherDataMap.get(stationID);
                     // if station ID not in map, return 404 error
                     if (stationData == null) {
+                        if (LIVE_UPDATES) {System.out.println("Station " + stationID + " not found.");}
                         returnErrorCode("404 Not Found", socketOut);
                         return;
                     }
@@ -445,9 +432,7 @@ public class AggregationServer {
                     lock.unlock();
                 }
 
-                if (LIVE_UPDATES) {
-                    System.out.println("GET request successfully handled, sending response...");
-                }
+                if (LIVE_UPDATES) {System.out.println("GET request successfully handled, sending response...");}
 
                 // send response with payload
                 String RESPONSE =
@@ -469,9 +454,7 @@ public class AggregationServer {
         }
 
         private void handlePut(BufferedReader socketIn, OutputStream socketOut, String resource) {
-            if (LIVE_UPDATES) {
-                System.out.println("Handling PUT request...");
-            }
+            if (LIVE_UPDATES) {System.out.println("Handling PUT request...");}
 
             // confirm resource follows format "/weather/stationID"
             String[] resourceParts = resource.split("/");
@@ -493,9 +476,7 @@ public class AggregationServer {
                 return;
             }
 
-            if (LIVE_UPDATES) {
-                System.out.println("Headers parsed successfully, locking to update clock");
-            }
+            if (LIVE_UPDATES) {System.out.println("Headers parsed successfully, locking to update clock");}
 
             lock.lock();
             try {
@@ -510,21 +491,17 @@ public class AggregationServer {
 //                return;
 //            }
 
-            if (LIVE_UPDATES) {
-                System.out.println("Parsing JSON data");
-            }
+            if (LIVE_UPDATES) {System.out.println("Parsing JSON data");}
             // parse remainder of socketIn buffer (payload) to JSON
             String[] jsonErrorCode = new String[2]; // string to hold error code
             ObjectNode weatherData = ParsingUtils.parseJSON(socketIn, jsonErrorCode, headers);
             if (weatherData == null) {
-                System.out.println("null wd");
+                if (LIVE_UPDATES) {System.out.println("JSON parsing returned null");}
                 returnErrorCode(jsonErrorCode[0], socketOut);
                 return;
             }
 
-            if (LIVE_UPDATES) {
-                System.out.println("JSON Parsed successfully");
-            }
+            if (LIVE_UPDATES) {System.out.println("JSON Parsed successfully");}
 
             boolean isNewStation = !weatherDataMap.containsKey(stationID);
             // boolean isNewStation = !stations.contains(stationID);
@@ -534,10 +511,6 @@ public class AggregationServer {
             weatherDataMap.put(stationID, weatherData);
             timestamps.put(stationID, System.currentTimeMillis());
             stations.add(stationID);
-
-            if (LIVE_UPDATES) {
-                System.out.println("Data put successfully");
-            }
 
             // lock to update persistent storage and remove expired/excess stations
             lock.lock();
@@ -550,9 +523,7 @@ public class AggregationServer {
                 lock.unlock();
             }
 
-            if (LIVE_UPDATES) {
-                System.out.println("PUT request successfully handled, sending response...");
-            }
+            if (LIVE_UPDATES) {System.out.println("PUT request successfully handled, sending response...");}
 
             // send response (201 for new station, 200 for update)
             String RESPONSE =
