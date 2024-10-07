@@ -1,8 +1,6 @@
 package com.weatheraggregation.client;
 
-import com.weatheraggregation.utils.LamportClock;
 import com.weatheraggregation.utils.ParsingUtils;
-import com.weatheraggregation.utils.ServerData;
 
 import static org.junit.jupiter.api.Assertions.*;
 import org.junit.jupiter.api.BeforeEach;
@@ -14,7 +12,6 @@ import org.mockito.MockitoAnnotations;
 
 import java.io.*;
 import java.net.Socket;
-import java.util.HashMap;
 import java.util.Map;
 
 import com.fasterxml.jackson.databind.node.ObjectNode;

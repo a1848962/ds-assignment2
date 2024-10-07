@@ -37,7 +37,7 @@ public class AggregationServer {
 
     // store weather data in a concurrent hashmap. Concurrent hashmap is used over the
     // traditional hashmap as it is optimised for multithreaded use.
-    private final Map<String, ObjectNode> weatherDataMap = new ConcurrentHashMap<>();
+    final Map<String, ObjectNode> weatherDataMap = new ConcurrentHashMap<>();
     private final Map<String, Long> timestamps = new ConcurrentHashMap<>();
     private final Set<String> stations = new HashSet<>();
     private final ReentrantLock lock = new ReentrantLock();
@@ -88,10 +88,10 @@ public class AggregationServer {
                 String input;
                 while ((input = reader.readLine()) != null) {
                     if (input.trim().equals("exit")) {
-                        close(false, serverSocket);  // exit and retain weather data
+                        close(false);  // exit and retain weather data
                         break;
                     } else if (input.trim().equals("exit -r")) {
-                        close(true, serverSocket);  // exit and remove weather data
+                        close(true);  // exit and remove weather data
                         break;
                     } else {
                         System.out.println("Invalid command: " + input);
@@ -107,7 +107,7 @@ public class AggregationServer {
     }
 
     /* function to close server. Will remove WD in persistent storage according to removeData bool */
-    private void close(boolean removeData, ServerSocket socket) {
+    void close(boolean removeData) {
         System.out.println("Shutting down...");
 
         if (removeData) {
@@ -131,8 +131,8 @@ public class AggregationServer {
 
         // close server socket
         try {
-            if (socket != null && !socket.isClosed()) {
-                socket.close();
+            if (serverSocket != null && !serverSocket.isClosed()) {
+                serverSocket.close();
             }
         } catch (IOException ex) {
             System.out.println("Error closing server socket: " + ex.getMessage());
@@ -143,7 +143,7 @@ public class AggregationServer {
     }
 
     // function to remove any stations exceeding EXPIRY_TIME
-    private void removeExpiredStations() {
+    void removeExpiredStations() {
         if (LIVE_UPDATES) {System.out.println("Removing expired stations...");}
 
         // use a set to store stationIDs of expired data
@@ -517,12 +517,6 @@ public class AggregationServer {
             } finally {
                 lock.unlock();
             }
-
-            // currently not sure how to handle lamport clock
-//            if (clientIsAhead) {
-//                returnErrorCode("400 Bad Request", socketOut);
-//                return;
-//            }
 
             if (LIVE_UPDATES) {System.out.println("Parsing JSON data");}
             // parse remainder of socketIn buffer (payload) to JSON
